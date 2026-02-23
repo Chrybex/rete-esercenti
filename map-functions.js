@@ -1,7 +1,3 @@
-// map-functions.js
-// NOTE: questo file assume che PROVINCE_INFO esista già (come nel tuo progetto)
-// const PROVINCE_INFO = {...}
-
 const PROVINCE_INFO = window.PROVINCE_INFO || {};
 
 const map = L.map("map", { scrollWheelZoom: true });
