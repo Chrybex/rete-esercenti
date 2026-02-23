@@ -1,4 +1,4 @@
-winddow.PROVINCE_INFO = {
+window.PROVINCE_INFO = {
   AQ:{name:"L'Aquila", region:"Abruzzo"}, CH:{name:"Chieti", region:"Abruzzo"}, PE:{name:"Pescara", region:"Abruzzo"}, TE:{name:"Teramo", region:"Abruzzo"},
   MT:{name:"Matera", region:"Basilicata"}, PZ:{name:"Potenza", region:"Basilicata"},
   CS:{name:"Cosenza", region:"Calabria"}, CZ:{name:"Catanzaro", region:"Calabria"}, KR:{name:"Crotone", region:"Calabria"}, RC:{name:"Reggio Calabria", region:"Calabria"}, VV:{name:"Vibo Valentia", region:"Calabria"},
