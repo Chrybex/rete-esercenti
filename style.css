@@ -23,7 +23,7 @@
 
     label{ display:block; margin-top:12px; font-size:12px; color:var(--muted); }
     input, select{ width:100%; margin-top:6px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; font-size:14px; }
-    .hint{ margin-top:10px; font-size:12px; color:var(--muted); line-height:1.4; }
+    .hint{ margin:25px; font-size:12px; color:var(--muted); line-height:1.4; }
 
     .map-card{ background:#fff; border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); border:1px solid var(--border); }
     .map-header{ padding:14px 16px; font-size:13px; color:var(--muted); border-bottom:1px solid var(--border); }
