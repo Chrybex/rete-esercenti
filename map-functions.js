@@ -1,5 +1,3 @@
-const PROVINCE_INFO = window.PROVINCE_INFO || {};
-
 const map = L.map("map", { scrollWheelZoom: true });
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
@@ -99,9 +97,11 @@ function popupHtml(p) {
 }
 
 // ----------------------------
-// Dropdown con ricerca (come volevi)
+// Dropdown con ricerca (supporta renderLabel)
 // ----------------------------
 function createCheckboxDropdown(rootEl, opts) {
+  const labelOf = (v) => (opts.renderLabel ? opts.renderLabel(v) : v);
+
   rootEl.classList.add("dd");
   rootEl.innerHTML = `
     <button type="button" class="dd-btn">
@@ -146,18 +146,22 @@ function createCheckboxDropdown(rootEl, opts) {
   const updateHead = () => {
     const n = selected.size;
     meta.textContent = `${n} selezionati`;
-    label.textContent = n === 0 ? opts.placeholder : (n === 1 ? [...selected][0] : `${n} selezionati`);
+    if (n === 0) label.textContent = opts.placeholder;
+    else if (n === 1) label.textContent = labelOf([...selected][0]);
+    else label.textContent = `${n} selezionati`;
   };
 
   const render = () => {
     const q = norm(search.value);
-    const arr = q ? values.filter(v => norm(v).includes(q)) : values;
+    const arr = q
+      ? values.filter(v => norm(labelOf(v)).includes(q) || norm(v).includes(q))
+      : values;
 
     list.innerHTML = arr.map(v => {
       const checked = selected.has(v) ? "checked" : "";
       return `<label class="dd-item">
         <input type="checkbox" value="${v}" ${checked}/>
-        <span>${v}</span>
+        <span>${labelOf(v)}</span>
       </label>`;
     }).join("");
 
@@ -172,12 +176,14 @@ function createCheckboxDropdown(rootEl, opts) {
   };
 
   search.addEventListener("input", render);
+
   rootEl.querySelectorAll(".dd-actions button").forEach(b => {
     b.addEventListener("click", () => {
       const act = b.getAttribute("data-act");
       if (act === "all") values.forEach(v => selected.add(v));
       if (act === "none") selected.clear();
-      updateHead(); render();
+      updateHead();
+      render();
       opts.onChange([...selected]);
     });
   });
@@ -185,20 +191,22 @@ function createCheckboxDropdown(rootEl, opts) {
   return {
     setValues(vs) {
       values = [...new Set(vs)].filter(Boolean).sort((a, b) => a.localeCompare(b, "it"));
-      // rimuovi selezioni non più presenti
       for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
-      updateHead(); render();
+      updateHead();
+      render();
     },
     setSelected(arr, { silent = false } = {}) {
       selected.clear();
       (arr || []).forEach(v => v && selected.add(v));
       for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
-      updateHead(); render();
+      updateHead();
+      render();
       if (!silent) opts.onChange([...selected]);
     },
     clear({ silent = false } = {}) {
       selected.clear();
-      updateHead(); render();
+      updateHead();
+      render();
       if (!silent) opts.onChange([]);
     },
     getSelected() {
@@ -206,17 +214,6 @@ function createCheckboxDropdown(rootEl, opts) {
     },
   };
 }
-
-// province label patch
-function setProvinceLabels() {
-  const list = els.ddProvince.querySelector(".dd-list");
-  if (!list) return;
-  list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-    const span = cb.closest(".dd-item")?.querySelector("span");
-    if (span) span.textContent = provLabel(cb.value);
-  });
-}
-els.ddProvince.addEventListener("click", () => setTimeout(setProvinceLabels, 0));
 
 // ----------------------------
 // Dropdown instances
@@ -273,6 +270,7 @@ const ddRegion = createCheckboxDropdown(els.ddRegion, {
 
 const ddProvince = createCheckboxDropdown(els.ddProvince, {
   placeholder: "Tutte le province",
+  renderLabel: (code) => provLabel(code), // ✅ label estesa sempre
   onChange: (arr) => {
     state.selectedProvinces = new Set(arr);
     recomputeDerivedRegions();
@@ -303,7 +301,9 @@ const ddCity = createCheckboxDropdown(els.ddCity, {
 function buildSingleSelect(select, values, allLabel = "Tutte") {
   const current = select.value;
   const sorted = [...values].filter(Boolean).sort((a, b) => a.localeCompare(b, "it"));
-  select.innerHTML = `<option value="">${allLabel}</option>` + sorted.map(v => `<option value="${v}">${v}</option>`).join("");
+  select.innerHTML =
+    `<option value="">${allLabel}</option>` +
+    sorted.map(v => `<option value="${v}">${v}</option>`).join("");
   if (sorted.includes(current)) select.value = current;
 }
 
@@ -329,7 +329,6 @@ function cascadeGeoOptions() {
   const { provinces, cities } = computeGeoOptions();
 
   ddProvince.setValues(provinces);
-  setProvinceLabels();
   ddCity.setValues(cities);
 
   if (hasManualScope()) {
@@ -359,7 +358,7 @@ function rebuildFilters(features) {
     const p = f.properties || {};
     if (p.establishment_category) cats.add(p.establishment_category);
 
-    // groups: sempre includo "Indipendenti" se serve
+    // groups: include "Indipendenti"
     groups.add(groupValue(p));
 
     const code = provCode(p);
@@ -380,7 +379,6 @@ function rebuildFilters(features) {
   ddService.setValues(services);
   ddRegion.setValues(regionsAll);
   ddProvince.setValues(provincesAll);
-  setProvinceLabels();
   ddCity.setValues(citiesAll);
 
   // gruppi: NON preseleziono all’avvio
@@ -405,8 +403,7 @@ function rebuildFilters(features) {
 }
 
 // ----------------------------
-// Unica funzione che testa se un punto passa i filtri NON-group
-// (così la riuso anche per syncGroups)
+// Punti che passano i filtri NON-group (riusata per syncGroups)
 // ----------------------------
 function passesNonGroupFilters(p) {
   const cat = els.category.value;
@@ -436,8 +433,7 @@ function passesNonGroupFilters(p) {
 
 // ----------------------------
 // Gruppi "smart"
-// - se NON ci sono altri filtri attivi -> non preseleziono nulla
-// - se ci sono altri filtri -> preseleziono i gruppi rimasti (pin visibili)
+// - con filtri NON-group -> preseleziona i gruppi dei pin rimasti
 // - se l'utente ha toccato gruppi -> non sovrascrivo, faccio solo cleanup
 // ----------------------------
 function syncGroups() {
@@ -462,7 +458,6 @@ function syncGroups() {
   ddGroup.setValues(availArr);
 
   if (!state.groupsTouched) {
-    // nessun bisogno di preselezionare se non ci sono filtri attivi
     if (!hasNonGroup) {
       state.selectedGroups.clear();
       ddGroup.setSelected([], { silent: true });
@@ -471,7 +466,6 @@ function syncGroups() {
       ddGroup.setSelected(availArr, { silent: true });
     }
   } else {
-    // cleanup su selezioni manuali
     const kept = availArr.filter(g => state.selectedGroups.has(g));
     state.selectedGroups = new Set(kept);
     ddGroup.setSelected(kept, { silent: true });
@@ -487,11 +481,9 @@ function applyFilters() {
   let visible = 0;
   for (const it of state.items) {
     const p = it.feature.properties || {};
-
     if (!passesNonGroupFilters(p)) continue;
 
     const g = groupValue(p);
-    // filtra per gruppi solo se l’utente ha selezionato qualcosa
     if (state.selectedGroups.size > 0 && !state.selectedGroups.has(g)) continue;
 
     cluster.addLayer(it.marker);
@@ -502,7 +494,7 @@ function applyFilters() {
 }
 
 // ----------------------------
-// Reset "totale mappa"
+// Reset totale
 // ----------------------------
 function resetAll() {
   els.category.value = "";
