@@ -24,7 +24,6 @@ const state = {
   items: [],
   initialBounds: null,
 
-  // selections
   selectedGroups: new Set(),
   selectedServices: new Set(),
   manualRegions: new Set(),
@@ -32,14 +31,18 @@ const state = {
   selectedProvinces: new Set(),
   selectedCities: new Set(),
 
-  // gruppi: auto-preselect finché non tocchi i gruppi
   groupsTouched: false,
 };
 
 const norm = (s) => (s ?? "").toString().trim().toLowerCase();
 const provCode = (p) => (p?.address_district || "").toUpperCase().trim();
-const provRegion = (code) => PROVINCE_INFO?.[code]?.region || "";
-const provLabel = (code) => (PROVINCE_INFO?.[code] ? `${code} — ${PROVINCE_INFO[code].name}` : code);
+const provRegion = (code) => (window.PROVINCE_INFO?.[code]?.region || "");
+
+// ✅ robust: se PROVINCE_INFO non è ancora pronto, non “rompo” la UI
+function provLabelSafe(code) {
+  const info = window.PROVINCE_INFO?.[code];
+  return info ? `${code} — ${info.name}` : code;
+}
 
 function groupValue(p) {
   const g = (p?.group_name ?? "").toString().trim();
@@ -58,19 +61,23 @@ function inManualScope(region) {
 
 function recomputeDerivedRegions() {
   const d = new Set();
+
   for (const code of state.selectedProvinces) {
     const reg = provRegion(code);
     if (reg) d.add(reg);
   }
+
   if (state.selectedCities.size > 0) {
     for (const it of state.items) {
       const p = it.feature.properties || {};
       const city = (p.address_city || "").trim();
       if (!city || !state.selectedCities.has(city)) continue;
+
       const reg = provRegion(provCode(p));
       if (reg) d.add(reg);
     }
   }
+
   state.derivedRegions = d;
 }
 
@@ -97,7 +104,7 @@ function popupHtml(p) {
 }
 
 // ----------------------------
-// Dropdown con ricerca (supporta renderLabel)
+// Dropdown con ricerca (supporta renderLabel + hook onOpen)
 // ----------------------------
 function createCheckboxDropdown(rootEl, opts) {
   const labelOf = (v) => (opts.renderLabel ? opts.renderLabel(v) : v);
@@ -130,19 +137,6 @@ function createCheckboxDropdown(rootEl, opts) {
   let values = [];
   const selected = new Set();
 
-  const setOpen = (open) => {
-    rootEl.classList.toggle("open", open);
-    if (open) {
-      search.value = "";
-      render();
-      setTimeout(() => search.focus(), 0);
-    }
-  };
-
-  btn.addEventListener("click", () => setOpen(!rootEl.classList.contains("open")));
-  document.addEventListener("click", (e) => { if (!rootEl.contains(e.target)) setOpen(false); });
-  panel.addEventListener("click", (e) => e.stopPropagation());
-
   const updateHead = () => {
     const n = selected.size;
     meta.textContent = `${n} selezionati`;
@@ -174,6 +168,20 @@ function createCheckboxDropdown(rootEl, opts) {
       });
     });
   };
+
+  const setOpen = (open) => {
+    rootEl.classList.toggle("open", open);
+    if (open) {
+      if (typeof opts.onOpen === "function") opts.onOpen();
+      search.value = "";
+      render();
+      setTimeout(() => search.focus(), 0);
+    }
+  };
+
+  btn.addEventListener("click", () => setOpen(!rootEl.classList.contains("open")));
+  document.addEventListener("click", (e) => { if (!rootEl.contains(e.target)) setOpen(false); });
+  panel.addEventListener("click", (e) => e.stopPropagation());
 
   search.addEventListener("input", render);
 
@@ -212,6 +220,11 @@ function createCheckboxDropdown(rootEl, opts) {
     getSelected() {
       return [...selected];
     },
+    // ✅ utile: forzo re-render (per province label)
+    refresh() {
+      updateHead();
+      render();
+    }
   };
 }
 
@@ -241,7 +254,6 @@ const ddRegion = createCheckboxDropdown(els.ddRegion, {
   onChange: (arr) => {
     state.manualRegions = new Set(arr);
 
-    // cleanup province/città fuori scope manuale
     if (hasManualScope()) {
       for (const code of [...state.selectedProvinces]) {
         const reg = provRegion(code);
@@ -270,7 +282,8 @@ const ddRegion = createCheckboxDropdown(els.ddRegion, {
 
 const ddProvince = createCheckboxDropdown(els.ddProvince, {
   placeholder: "Tutte le province",
-  renderLabel: (code) => provLabel(code), // ✅ label estesa sempre
+  renderLabel: (code) => provLabelSafe(code),
+  onOpen: () => ddProvince.refresh(), // ✅ quando apri, riallineo label estese
   onChange: (arr) => {
     state.selectedProvinces = new Set(arr);
     recomputeDerivedRegions();
@@ -344,6 +357,9 @@ function cascadeGeoOptions() {
     ddProvince.setSelected([...state.selectedProvinces], { silent: true });
     ddCity.setSelected([...state.selectedCities], { silent: true });
   }
+
+  // ✅ garantisco che province ricalcoli etichette estese
+  ddProvince.refresh();
 }
 
 function rebuildFilters(features) {
@@ -358,7 +374,6 @@ function rebuildFilters(features) {
     const p = f.properties || {};
     if (p.establishment_category) cats.add(p.establishment_category);
 
-    // groups: include "Indipendenti"
     groups.add(groupValue(p));
 
     const code = provCode(p);
@@ -381,11 +396,9 @@ function rebuildFilters(features) {
   ddProvince.setValues(provincesAll);
   ddCity.setValues(citiesAll);
 
-  // gruppi: NON preseleziono all’avvio
   ddGroup.setValues(groups);
   ddGroup.setSelected([], { silent: true });
 
-  // geo clear
   ddRegion.setSelected([], { silent: true });
   ddProvince.setSelected([], { silent: true });
   ddCity.setSelected([], { silent: true });
@@ -403,7 +416,7 @@ function rebuildFilters(features) {
 }
 
 // ----------------------------
-// Punti che passano i filtri NON-group (riusata per syncGroups)
+// Punti che passano i filtri NON-group
 // ----------------------------
 function passesNonGroupFilters(p) {
   const cat = els.category.value;
@@ -432,9 +445,7 @@ function passesNonGroupFilters(p) {
 }
 
 // ----------------------------
-// Gruppi "smart"
-// - con filtri NON-group -> preseleziona i gruppi dei pin rimasti
-// - se l'utente ha toccato gruppi -> non sovrascrivo, faccio solo cleanup
+// Gruppi smart
 // ----------------------------
 function syncGroups() {
   if (!state.items.length) return;
@@ -547,9 +558,6 @@ async function init() {
   applyFilters();
 }
 
-// ----------------------------
-// Events
-// ----------------------------
 els.category.addEventListener("change", () => { syncGroups(); applyFilters(); });
 els.reset.addEventListener("click", (e) => { e.preventDefault(); resetAll(); });
 
