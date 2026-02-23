@@ -91,6 +91,12 @@
 }
 .dd-item:hover{ background:#f8fafc; }
 .dd-item input{ width:16px; height:16px; }
+.dd-actions {
+        display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 10px;
+  }
   </style>
 </head>
 
@@ -259,8 +265,8 @@
         <div class="dd-head">
           <input class="dd-search" placeholder="Cerca..." />
           <div class="dd-actions">
-            <button type="button" data-act="all">Tutti</button>
-            <button type="button" data-act="none">Nessuno</button>
+            <button type="button" class="btn" data-act="all">Tutti</button>
+            <button type="button" class="btn" data-act="none">Nessuno</button>
           </div>
         </div>
         <div class="dd-list"></div>
