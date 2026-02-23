@@ -12,7 +12,7 @@ const cluster = L.markerClusterGroup({ showCoverageOnHover: false });
 cluster.addTo(map);
 
 const els = {
-  q: document.getElementById("q"),
+  // ✅ rimosso q
   category: document.getElementById("category"),
   reset: document.getElementById("reset"),
   kpiVisible: document.getElementById("kpi-visible"),
@@ -30,6 +30,9 @@ const state = {
   geojson: null,
   items: [],
 
+  // ✅ Gruppi: AUTO (preseleziona in base ai pin visibili) / MANUAL (diventa filtro)
+  groupMode: "auto", // "auto" | "manual"
+
   selectedGroups: new Set(),
   selectedServices: new Set(),
 
@@ -44,52 +47,32 @@ const norm = (s) => (s ?? "").toString().trim().toLowerCase();
 
 // Province -> { name, region }
 const PROVINCE_INFO = {
-  // Abruzzo
   AQ:{name:"L'Aquila", region:"Abruzzo"}, CH:{name:"Chieti", region:"Abruzzo"}, PE:{name:"Pescara", region:"Abruzzo"}, TE:{name:"Teramo", region:"Abruzzo"},
-  // Basilicata
   MT:{name:"Matera", region:"Basilicata"}, PZ:{name:"Potenza", region:"Basilicata"},
-  // Calabria
   CS:{name:"Cosenza", region:"Calabria"}, CZ:{name:"Catanzaro", region:"Calabria"}, KR:{name:"Crotone", region:"Calabria"}, RC:{name:"Reggio Calabria", region:"Calabria"}, VV:{name:"Vibo Valentia", region:"Calabria"},
-  // Campania
   AV:{name:"Avellino", region:"Campania"}, BN:{name:"Benevento", region:"Campania"}, CE:{name:"Caserta", region:"Campania"}, NA:{name:"Napoli", region:"Campania"}, SA:{name:"Salerno", region:"Campania"},
-  // Emilia-Romagna
   BO:{name:"Bologna", region:"Emilia-Romagna"}, FE:{name:"Ferrara", region:"Emilia-Romagna"}, FC:{name:"Forlì-Cesena", region:"Emilia-Romagna"}, MO:{name:"Modena", region:"Emilia-Romagna"},
   PR:{name:"Parma", region:"Emilia-Romagna"}, PC:{name:"Piacenza", region:"Emilia-Romagna"}, RA:{name:"Ravenna", region:"Emilia-Romagna"}, RE:{name:"Reggio Emilia", region:"Emilia-Romagna"}, RN:{name:"Rimini", region:"Emilia-Romagna"},
-  // Friuli-Venezia Giulia
   GO:{name:"Gorizia", region:"Friuli-Venezia Giulia"}, PN:{name:"Pordenone", region:"Friuli-Venezia Giulia"}, TS:{name:"Trieste", region:"Friuli-Venezia Giulia"}, UD:{name:"Udine", region:"Friuli-Venezia Giulia"},
-  // Lazio
   FR:{name:"Frosinone", region:"Lazio"}, LT:{name:"Latina", region:"Lazio"}, RI:{name:"Rieti", region:"Lazio"}, RM:{name:"Roma", region:"Lazio"}, VT:{name:"Viterbo", region:"Lazio"},
-  // Liguria
   GE:{name:"Genova", region:"Liguria"}, IM:{name:"Imperia", region:"Liguria"}, SP:{name:"La Spezia", region:"Liguria"}, SV:{name:"Savona", region:"Liguria"},
-  // Lombardia
   BG:{name:"Bergamo", region:"Lombardia"}, BS:{name:"Brescia", region:"Lombardia"}, CO:{name:"Como", region:"Lombardia"}, CR:{name:"Cremona", region:"Lombardia"},
   LC:{name:"Lecco", region:"Lombardia"}, LO:{name:"Lodi", region:"Lombardia"}, MB:{name:"Monza e Brianza", region:"Lombardia"}, MI:{name:"Milano", region:"Lombardia"},
   MN:{name:"Mantova", region:"Lombardia"}, PV:{name:"Pavia", region:"Lombardia"}, SO:{name:"Sondrio", region:"Lombardia"}, VA:{name:"Varese", region:"Lombardia"},
-  // Marche
   AN:{name:"Ancona", region:"Marche"}, AP:{name:"Ascoli Piceno", region:"Marche"}, FM:{name:"Fermo", region:"Marche"}, MC:{name:"Macerata", region:"Marche"}, PU:{name:"Pesaro e Urbino", region:"Marche"},
-  // Molise
   CB:{name:"Campobasso", region:"Molise"}, IS:{name:"Isernia", region:"Molise"},
-  // Piemonte
   AL:{name:"Alessandria", region:"Piemonte"}, AT:{name:"Asti", region:"Piemonte"}, BI:{name:"Biella", region:"Piemonte"}, CN:{name:"Cuneo", region:"Piemonte"},
   NO:{name:"Novara", region:"Piemonte"}, TO:{name:"Torino", region:"Piemonte"}, VB:{name:"Verbano-Cusio-Ossola", region:"Piemonte"}, VC:{name:"Vercelli", region:"Piemonte"},
-  // Puglia
   BA:{name:"Bari", region:"Puglia"}, BR:{name:"Brindisi", region:"Puglia"}, BT:{name:"Barletta-Andria-Trani", region:"Puglia"}, FG:{name:"Foggia", region:"Puglia"}, LE:{name:"Lecce", region:"Puglia"}, TA:{name:"Taranto", region:"Puglia"},
-  // Sardegna
   CA:{name:"Cagliari", region:"Sardegna"}, NU:{name:"Nuoro", region:"Sardegna"}, OR:{name:"Oristano", region:"Sardegna"}, SS:{name:"Sassari", region:"Sardegna"}, SU:{name:"Sud Sardegna", region:"Sardegna"},
-  // Sicilia
   AG:{name:"Agrigento", region:"Sicilia"}, CL:{name:"Caltanissetta", region:"Sicilia"}, CT:{name:"Catania", region:"Sicilia"}, EN:{name:"Enna", region:"Sicilia"},
   ME:{name:"Messina", region:"Sicilia"}, PA:{name:"Palermo", region:"Sicilia"}, RG:{name:"Ragusa", region:"Sicilia"}, SR:{name:"Siracusa", region:"Sicilia"}, TP:{name:"Trapani", region:"Sicilia"},
-  // Toscana
   AR:{name:"Arezzo", region:"Toscana"}, FI:{name:"Firenze", region:"Toscana"}, GR:{name:"Grosseto", region:"Toscana"}, LI:{name:"Livorno", region:"Toscana"},
   LU:{name:"Lucca", region:"Toscana"}, MS:{name:"Massa-Carrara", region:"Toscana"}, PI:{name:"Pisa", region:"Toscana"}, PO:{name:"Prato", region:"Toscana"},
   PT:{name:"Pistoia", region:"Toscana"}, SI:{name:"Siena", region:"Toscana"},
-  // Trentino-Alto Adige
   BZ:{name:"Bolzano", region:"Trentino-Alto Adige"}, TN:{name:"Trento", region:"Trentino-Alto Adige"},
-  // Umbria
   PG:{name:"Perugia", region:"Umbria"}, TR:{name:"Terni", region:"Umbria"},
-  // Valle d'Aosta
   AO:{name:"Aosta", region:"Valle d'Aosta"},
-  // Veneto
   BL:{name:"Belluno", region:"Veneto"}, PD:{name:"Padova", region:"Veneto"}, RO:{name:"Rovigo", region:"Veneto"}, TV:{name:"Treviso", region:"Veneto"},
   VE:{name:"Venezia", region:"Veneto"}, VI:{name:"Vicenza", region:"Veneto"}, VR:{name:"Verona", region:"Veneto"},
 };
@@ -151,17 +134,11 @@ function popupHtml(p){
   </div>`;
 }
 
-function featureText(p){
-  return norm([
-    p.name, p.address_line_1, p.address_city, p.address_district,
-    p.address_zipcode, p.establishment_category, p.services, p.group_name, p.hubspot_id
-  ].filter(Boolean).join(" "));
-}
-
 // -------- Checkbox dropdown (no librerie) --------
 function createCheckboxDropdown(rootEl, opts){
   rootEl.classList.add("dd");
 
+  // ✅ rimossa barra di ricerca dd-search
   rootEl.innerHTML = `
     <button type="button" class="dd-btn">
       <span class="dd-label">${opts.placeholder}</span>
@@ -169,7 +146,6 @@ function createCheckboxDropdown(rootEl, opts){
     </button>
     <div class="dd-panel">
       <div class="dd-head">
-        <input class="dd-search" placeholder="Cerca..." />
         <div class="dd-actions">
           <button type="button" class="btn" data-act="all">Tutti</button>
           <button type="button" class="btn" data-act="none">Reset</button>
@@ -184,18 +160,13 @@ function createCheckboxDropdown(rootEl, opts){
   const meta = rootEl.querySelector(".dd-meta");
   const panel = rootEl.querySelector(".dd-panel");
   const list = rootEl.querySelector(".dd-list");
-  const search = rootEl.querySelector(".dd-search");
 
   let values = [];
   const selected = new Set();
 
   function setOpen(open){
     rootEl.classList.toggle("open", open);
-    if (open) {
-      search.value = "";
-      renderList();
-      setTimeout(() => search.focus(), 0);
-    }
+    if (open) renderList();
   }
 
   btn.addEventListener("click", () => setOpen(!rootEl.classList.contains("open")));
@@ -214,10 +185,7 @@ function createCheckboxDropdown(rootEl, opts){
   }
 
   function renderList(){
-    const q = norm(search.value);
-    const filtered = q ? values.filter(v => norm(v).includes(q)) : values;
-
-    list.innerHTML = filtered.map(v => {
+    list.innerHTML = values.map(v => {
       const checked = selected.has(v) ? "checked" : "";
       return `
         <label class="dd-item">
@@ -237,8 +205,6 @@ function createCheckboxDropdown(rootEl, opts){
       });
     });
   }
-
-  search.addEventListener("input", renderList);
 
   rootEl.querySelectorAll(".dd-actions button").forEach(b => {
     b.addEventListener("click", () => {
@@ -295,13 +261,83 @@ function setProvinceLabels(){
     if (span) span.textContent = provLabel(code);
   });
 }
-// ogni volta che apri/cerca nel dropdown province, il list viene re-renderizzato → rilabel
 els.ddProvince.addEventListener("click", () => setTimeout(setProvinceLabels, 0));
+
+// ===========================
+// ✅ Toggle AUTO/MANUAL per Gruppi (senza cambiare HTML)
+// ===========================
+function ensureGroupModeToggle(){
+  if (!els.ddGroup) return;
+
+  // evita doppie inizializzazioni
+  if (els.ddGroup.dataset.toggleReady === "1") return;
+  els.ddGroup.dataset.toggleReady = "1";
+
+  // inserisco un toggle dentro la head del panel
+  const panel = els.ddGroup.querySelector(".dd-panel");
+  const head = els.ddGroup.querySelector(".dd-head");
+  if (!panel || !head) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "dd-toggle";
+  wrap.style.display = "flex";
+  wrap.style.alignItems = "center";
+  wrap.style.justifyContent = "space-between";
+  wrap.style.gap = "10px";
+  wrap.style.padding = "8px 0 0 0";
+
+  wrap.innerHTML = `
+    <span style="font-size:12px;color:#64748b;">Modalità Gruppi</span>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#0f172a;">
+      <input id="groups-mode-toggle" type="checkbox" />
+      <span id="groups-mode-label">AUTO</span>
+    </label>
+  `;
+
+  head.appendChild(wrap);
+
+  const toggle = wrap.querySelector("#groups-mode-toggle");
+  const label = wrap.querySelector("#groups-mode-label");
+
+  function syncUI(){
+    const isManual = state.groupMode === "manual";
+    toggle.checked = isManual;
+    label.textContent = isManual ? "MANUAL" : "AUTO";
+  }
+
+  toggle.addEventListener("change", () => {
+    state.groupMode = toggle.checked ? "manual" : "auto";
+
+    // se torno in AUTO, riallineo la preselezione ai pin visibili subito
+    if (state.groupMode === "auto") {
+      state.selectedGroups.clear(); // in AUTO non deve filtrare
+      ddGroup.clear({ silent: true }); // pulisco, poi applyFilters preseleziona
+      applyFilters();
+    } else {
+      // in MANUAL: mantengo quello che l'utente vede selezionato come filtro
+      state.selectedGroups = new Set(ddGroup.getSelected());
+      applyFilters();
+    }
+
+    syncUI();
+  });
+
+  syncUI();
+}
 
 // Dropdown instances: group/service
 const ddGroup = createCheckboxDropdown(els.ddGroup, {
   placeholder: "Tutti i gruppi",
-  onChange: (arr) => { state.selectedGroups = new Set(arr); applyFilters(); }
+  onChange: (arr) => {
+    // ✅ appena l'utente tocca Gruppi → MANUAL
+    state.groupMode = "manual";
+    state.selectedGroups = new Set(arr);
+    // aggiorna toggle UI se già creato
+    const t = document.getElementById("groups-mode-toggle");
+    const l = document.getElementById("groups-mode-label");
+    if (t && l) { t.checked = true; l.textContent = "MANUAL"; }
+    applyFilters();
+  }
 });
 
 const ddService = createCheckboxDropdown(els.ddService, {
@@ -313,10 +349,8 @@ const ddService = createCheckboxDropdown(els.ddService, {
 const ddRegion = createCheckboxDropdown(els.ddRegion, {
   placeholder: "Tutte le regioni",
   onChange: (arr) => {
-    // selezione MANUALE regioni
     state.manualRegions = new Set(arr);
 
-    // se ho scope manuale, ripulisci province/città fuori scope
     if (hasManualScope()){
       for (const code of [...state.selectedProvinces]){
         const reg = provRegion(code);
@@ -334,10 +368,7 @@ const ddRegion = createCheckboxDropdown(els.ddRegion, {
       }
     }
 
-    // ricalcola derived (da province/città rimaste)
     recomputeDerivedRegions();
-
-    // UI Regione deve mostrare manual ∪ derived
     ddRegion.setSelected([...effectiveRegionsSet()], { silent: true });
 
     cascadeGeoOptions();
@@ -350,10 +381,7 @@ const ddProvince = createCheckboxDropdown(els.ddProvince, {
   onChange: (arr) => {
     state.selectedProvinces = new Set(arr);
 
-    // derive regions da province + città
     recomputeDerivedRegions();
-
-    // auto-preseleziona regioni (manual ∪ derived)
     ddRegion.setSelected([...effectiveRegionsSet()], { silent: true });
 
     cascadeGeoOptions();
@@ -366,9 +394,7 @@ const ddCity = createCheckboxDropdown(els.ddCity, {
   onChange: (arr) => {
     state.selectedCities = new Set(arr);
 
-    // derive regions anche dalle città selezionate
     recomputeDerivedRegions();
-
     ddRegion.setSelected([...effectiveRegionsSet()], { silent: true });
 
     cascadeGeoOptions();
@@ -386,9 +412,6 @@ function buildSingleSelect(select, values, allLabel = "Tutte"){
   if (sorted.includes(current)) select.value = current;
 }
 
-// ✅ calcola opzioni province/città:
-// - se manualRegions è vuoto: NON restringere (così posso aggiungere province/città di altre regioni)
-// - se manualRegions è valorizzato: restringi a quelle regioni
 function computeGeoOptions(){
   const provinces = new Set();
   const cities = new Set();
@@ -399,7 +422,7 @@ function computeGeoOptions(){
     const reg = provRegion(code);
     const city = p.address_city || "";
 
-    if (!inManualScope(reg)) continue; // restringe SOLO se manual scope presente
+    if (!inManualScope(reg)) continue;
 
     if (code) provinces.add(code);
     if (city) cities.add(city);
@@ -415,7 +438,6 @@ function cascadeGeoOptions(){
   setProvinceLabels();
   ddCity.setValues(cities);
 
-  // se ho scope manuale, devo togliere selezioni non più valide
   if (hasManualScope()){
     state.selectedProvinces = new Set([...state.selectedProvinces].filter(p => provinces.has(p)));
     ddProvince.setSelected([...state.selectedProvinces], { silent: true });
@@ -423,11 +445,9 @@ function cascadeGeoOptions(){
     state.selectedCities = new Set([...state.selectedCities].filter(c => cities.has(c)));
     ddCity.setSelected([...state.selectedCities], { silent: true });
 
-    // derived va ricalcolato dopo eventuali cleanup
     recomputeDerivedRegions();
     ddRegion.setSelected([...effectiveRegionsSet()], { silent: true });
   } else {
-    // no scope: mantieni selezioni così come sono (anche se fuori "current")
     ddProvince.setSelected([...state.selectedProvinces], { silent: true });
     ddCity.setSelected([...state.selectedCities], { silent: true });
   }
@@ -463,13 +483,11 @@ function rebuildFilters(features){
   ddGroup.setValues(groups);
   ddService.setValues(services);
 
-  // region/province/city initial values
   ddRegion.setValues(regionsAll);
   ddProvince.setValues(provincesAll);
   setProvinceLabels();
   ddCity.setValues(citiesAll);
 
-  // all clean at init
   ddRegion.setSelected([], { silent: true });
   ddProvince.setSelected([], { silent: true });
   ddCity.setSelected([], { silent: true });
@@ -479,11 +497,15 @@ function rebuildFilters(features){
   state.selectedProvinces.clear();
   state.selectedCities.clear();
 
+  // ✅ reset gruppi in AUTO
+  state.groupMode = "auto";
+  state.selectedGroups.clear();
+  ddGroup.clear({ silent: true });
+
   cascadeGeoOptions();
 }
 
 function applyFilters(){
-  const q = norm(els.q.value);
   const cat = els.category.value;
 
   const regionsSel = [...effectiveRegionsSet()];
@@ -492,6 +514,8 @@ function applyFilters(){
 
   const selectedGroups = [...state.selectedGroups];
   const selectedServices = [...state.selectedServices];
+
+  const visibleGroups = new Set(); // ✅ per AUTO mode
 
   cluster.clearLayers();
   let visible = 0;
@@ -505,28 +529,33 @@ function applyFilters(){
     const reg = provRegion(code);
     const city = p.address_city || "";
 
-    // geo (AND tra dimensioni)
     if (regionsSel.length > 0 && !regionsSel.includes(reg)) continue;
     if (provincesSel.length > 0 && !provincesSel.includes(code)) continue;
     if (citiesSel.length > 0 && !citiesSel.includes(city)) continue;
 
-    // groups OR
-    if (selectedGroups.length > 0 && !selectedGroups.includes(p.group_name)) continue;
+    // ✅ Gruppi filtra SOLO in MANUAL
+    if (state.groupMode === "manual") {
+      if (selectedGroups.length > 0 && !selectedGroups.includes(p.group_name)) continue;
+    }
 
-    // services OR
     if (selectedServices.length > 0) {
       const itemServices = (p.services || "").split(",").map(s => s.trim()).filter(Boolean);
       const match = selectedServices.some(s => itemServices.includes(s));
       if (!match) continue;
     }
 
-    if (q && !featureText(p).includes(q)) continue;
+    if (p.group_name) visibleGroups.add(p.group_name);
 
     cluster.addLayer(item.marker);
     visible += 1;
   }
 
   els.kpiVisible.textContent = visible.toLocaleString("it-IT");
+
+  // ✅ AUTO: preseleziono i gruppi dei pin visibili, senza filtrare
+  if (state.groupMode === "auto") {
+    ddGroup.setSelected([...visibleGroups], { silent: true });
+  }
 }
 
 async function init(){
@@ -547,15 +576,17 @@ async function init(){
   map.fitBounds(L.latLngBounds(latlngs).pad(0.08));
 
   rebuildFilters(geojson.features);
+
+  // ✅ crea toggle dentro il dropdown gruppi
+  ensureGroupModeToggle();
+
   applyFilters();
 }
 
-els.q.addEventListener("input", applyFilters);
 els.category.addEventListener("change", applyFilters);
 
 els.reset.addEventListener("click", (e) => {
   e.preventDefault();
-  els.q.value = "";
   els.category.value = "";
 
   ddGroup.clear({ silent: true });
@@ -564,7 +595,10 @@ els.reset.addEventListener("click", (e) => {
   ddProvince.clear({ silent: true });
   ddCity.clear({ silent: true });
 
+  // ✅ reset modalità gruppi
+  state.groupMode = "auto";
   state.selectedGroups.clear();
+
   state.selectedServices.clear();
 
   state.manualRegions.clear();
@@ -573,6 +607,11 @@ els.reset.addEventListener("click", (e) => {
   state.selectedCities.clear();
 
   if (state.geojson?.features) rebuildFilters(state.geojson.features);
+
+  // riallinea toggle UI (se esiste)
+  const t = document.getElementById("groups-mode-toggle");
+  const l = document.getElementById("groups-mode-label");
+  if (t && l) { t.checked = false; l.textContent = "AUTO"; }
 
   applyFilters();
 });
