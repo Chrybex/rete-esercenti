@@ -30,9 +30,6 @@ const state = {
   geojson: null,
   items: [],
 
-  // ✅ Gruppi: AUTO (preseleziona in base ai pin visibili) / MANUAL (diventa filtro)
-  groupMode: "auto", // "auto" | "manual"
-
   selectedGroups: new Set(),
   selectedServices: new Set(),
 
@@ -263,81 +260,10 @@ function setProvinceLabels(){
 }
 els.ddProvince.addEventListener("click", () => setTimeout(setProvinceLabels, 0));
 
-// ===========================
-// ✅ Toggle AUTO/MANUAL per Gruppi (senza cambiare HTML)
-// ===========================
-function ensureGroupModeToggle(){
-  if (!els.ddGroup) return;
-
-  // evita doppie inizializzazioni
-  if (els.ddGroup.dataset.toggleReady === "1") return;
-  els.ddGroup.dataset.toggleReady = "1";
-
-  // inserisco un toggle dentro la head del panel
-  const panel = els.ddGroup.querySelector(".dd-panel");
-  const head = els.ddGroup.querySelector(".dd-head");
-  if (!panel || !head) return;
-
-  const wrap = document.createElement("div");
-  wrap.className = "dd-toggle";
-  wrap.style.display = "flex";
-  wrap.style.alignItems = "center";
-  wrap.style.justifyContent = "space-between";
-  wrap.style.gap = "10px";
-  wrap.style.padding = "8px 0 0 0";
-
-  wrap.innerHTML = `
-    <span style="font-size:12px;color:#64748b;">Modalità Gruppi</span>
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#0f172a;">
-      <input id="groups-mode-toggle" type="checkbox" />
-      <span id="groups-mode-label">AUTO</span>
-    </label>
-  `;
-
-  head.appendChild(wrap);
-
-  const toggle = wrap.querySelector("#groups-mode-toggle");
-  const label = wrap.querySelector("#groups-mode-label");
-
-  function syncUI(){
-    const isManual = state.groupMode === "manual";
-    toggle.checked = isManual;
-    label.textContent = isManual ? "MANUAL" : "AUTO";
-  }
-
-  toggle.addEventListener("change", () => {
-    state.groupMode = toggle.checked ? "manual" : "auto";
-
-    // se torno in AUTO, riallineo la preselezione ai pin visibili subito
-    if (state.groupMode === "auto") {
-      state.selectedGroups.clear(); // in AUTO non deve filtrare
-      ddGroup.clear({ silent: true }); // pulisco, poi applyFilters preseleziona
-      applyFilters();
-    } else {
-      // in MANUAL: mantengo quello che l'utente vede selezionato come filtro
-      state.selectedGroups = new Set(ddGroup.getSelected());
-      applyFilters();
-    }
-
-    syncUI();
-  });
-
-  syncUI();
-}
-
 // Dropdown instances: group/service
 const ddGroup = createCheckboxDropdown(els.ddGroup, {
   placeholder: "Tutti i gruppi",
-  onChange: (arr) => {
-    // ✅ appena l'utente tocca Gruppi → MANUAL
-    state.groupMode = "manual";
-    state.selectedGroups = new Set(arr);
-    // aggiorna toggle UI se già creato
-    const t = document.getElementById("groups-mode-toggle");
-    const l = document.getElementById("groups-mode-label");
-    if (t && l) { t.checked = true; l.textContent = "MANUAL"; }
-    applyFilters();
-  }
+  onChange: (arr) => { state.selectedGroups = new Set(arr); applyFilters(); }
 });
 
 const ddService = createCheckboxDropdown(els.ddService, {
@@ -497,11 +423,6 @@ function rebuildFilters(features){
   state.selectedProvinces.clear();
   state.selectedCities.clear();
 
-  // ✅ reset gruppi in AUTO
-  state.groupMode = "auto";
-  state.selectedGroups.clear();
-  ddGroup.clear({ silent: true });
-
   cascadeGeoOptions();
 }
 
@@ -514,8 +435,6 @@ function applyFilters(){
 
   const selectedGroups = [...state.selectedGroups];
   const selectedServices = [...state.selectedServices];
-
-  const visibleGroups = new Set(); // ✅ per AUTO mode
 
   cluster.clearLayers();
   let visible = 0;
@@ -533,10 +452,7 @@ function applyFilters(){
     if (provincesSel.length > 0 && !provincesSel.includes(code)) continue;
     if (citiesSel.length > 0 && !citiesSel.includes(city)) continue;
 
-    // ✅ Gruppi filtra SOLO in MANUAL
-    if (state.groupMode === "manual") {
-      if (selectedGroups.length > 0 && !selectedGroups.includes(p.group_name)) continue;
-    }
+    if (selectedGroups.length > 0 && !selectedGroups.includes(p.group_name)) continue;
 
     if (selectedServices.length > 0) {
       const itemServices = (p.services || "").split(",").map(s => s.trim()).filter(Boolean);
@@ -544,18 +460,11 @@ function applyFilters(){
       if (!match) continue;
     }
 
-    if (p.group_name) visibleGroups.add(p.group_name);
-
     cluster.addLayer(item.marker);
     visible += 1;
   }
 
   els.kpiVisible.textContent = visible.toLocaleString("it-IT");
-
-  // ✅ AUTO: preseleziono i gruppi dei pin visibili, senza filtrare
-  if (state.groupMode === "auto") {
-    ddGroup.setSelected([...visibleGroups], { silent: true });
-  }
 }
 
 async function init(){
@@ -576,10 +485,6 @@ async function init(){
   map.fitBounds(L.latLngBounds(latlngs).pad(0.08));
 
   rebuildFilters(geojson.features);
-
-  // ✅ crea toggle dentro il dropdown gruppi
-  ensureGroupModeToggle();
-
   applyFilters();
 }
 
@@ -595,10 +500,7 @@ els.reset.addEventListener("click", (e) => {
   ddProvince.clear({ silent: true });
   ddCity.clear({ silent: true });
 
-  // ✅ reset modalità gruppi
-  state.groupMode = "auto";
   state.selectedGroups.clear();
-
   state.selectedServices.clear();
 
   state.manualRegions.clear();
@@ -607,11 +509,6 @@ els.reset.addEventListener("click", (e) => {
   state.selectedCities.clear();
 
   if (state.geojson?.features) rebuildFilters(state.geojson.features);
-
-  // riallinea toggle UI (se esiste)
-  const t = document.getElementById("groups-mode-toggle");
-  const l = document.getElementById("groups-mode-label");
-  if (t && l) { t.checked = false; l.textContent = "AUTO"; }
 
   applyFilters();
 });
