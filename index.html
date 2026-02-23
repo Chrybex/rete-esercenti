@@ -50,6 +50,47 @@
       #map{ height:70vh; }
     }
     .logo-wrapper .logo { height: 24px; width: auto; display: block; }
+    .dd{
+  position: relative;
+  margin-top: 6px;
+}
+.dd-btn{
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  cursor:pointer;
+  font-size:14px;
+}
+.dd-panel{
+  position:absolute;
+  top:calc(100% + 6px);
+  left:0;
+  right:0;
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:12px;
+  box-shadow:var(--shadow);
+  max-height:260px;
+  overflow:auto;
+  display:none;
+  z-index:100;
+}
+.dd.open .dd-panel{ display:block; }
+
+.dd-item{
+  padding:8px 12px;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  cursor:pointer;
+}
+.dd-item:hover{ background:#f8fafc; }
+.dd-item input{ width:16px; height:16px; }
   </style>
 </head>
 
@@ -115,18 +156,16 @@
       <label for="q">Cerca (nome, indirizzo, città, servizi)</label>
       <input id="q" placeholder="Es. supermercato, Milano, Buoni Pasto..." />
 
-     <label for="category">Categoria</label>
+   <label for="category">Categoria</label>
 <select id="category">
   <option value="">Tutte</option>
 </select>
 
-<label for="group">Gruppo</label>
-<select id="group" multiple size="6">
-</select>
+<label>Gruppo</label>
+<div class="dd" id="dd-group"></div>
 
-<label for="service">Servizio</label>
-<select id="service" multiple size="6">
-</select>
+<label>Servizio</label>
+<div class="dd" id="dd-service"></div>
 
 <label for="city">Città</label>
 <select id="city">
@@ -163,25 +202,23 @@
   const els = {
     q: document.getElementById("q"),
     category: document.getElementById("category"),
-    service: document.getElementById("service"), // multi
-    group: document.getElementById("group"),     // multi
     city: document.getElementById("city"),
     reset: document.getElementById("reset"),
     kpiVisible: document.getElementById("kpi-visible"),
     kpiTotal: document.getElementById("kpi-total"),
+
+    ddGroup: document.getElementById("dd-group"),
+    ddService: document.getElementById("dd-service"),
   };
 
-  const state = { geojson: null, items: [] };
+  const state = {
+    geojson: null,
+    items: [],
+    selectedGroups: new Set(),
+    selectedServices: new Set(),
+  };
 
   const norm = (s) => (s ?? "").toString().trim().toLowerCase();
-
-  function getSelectedValues(select){
-    return Array.from(select.selectedOptions).map(o => o.value).filter(Boolean);
-  }
-
-  function clearMultiSelect(select){
-    Array.from(select.options).forEach(o => { o.selected = false; });
-  }
 
   function popupHtml(p){
     const esc = (x) => (x ?? "").toString()
@@ -201,24 +238,152 @@
     </div>`;
   }
 
-  // Se select è multi: nessuna opzione "Tutte"
-  // Se select è single: aggiunge la prima opzione "Tutte/Tutti"
-  function buildOptionList(select, values, allLabel = "Tutte"){
-    const isMulti = select.multiple === true;
-    const current = isMulti ? new Set(getSelectedValues(select)) : select.value;
+  function featureText(p){
+    return norm([
+      p.name, p.address_line_1, p.address_city, p.address_district,
+      p.address_zipcode, p.establishment_category, p.services, p.group_name, p.hubspot_id
+    ].filter(Boolean).join(" "));
+  }
 
-    const sorted = [...values].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
+  // -------- Checkbox dropdown (no librerie) --------
+  function createCheckboxDropdown(rootEl, opts){
+    // opts: { placeholder, onChange }
+    rootEl.classList.add("dd");
 
-    if (isMulti){
-      select.innerHTML = sorted.map(v => `<option value="${v}">${v}</option>`).join("");
-      // ripristina selezioni precedenti se presenti
-      Array.from(select.options).forEach(o => { if (current.has(o.value)) o.selected = true; });
-    } else {
-      select.innerHTML =
-        `<option value="">${allLabel}</option>` +
-        sorted.map(v => `<option value="${v}">${v}</option>`).join("");
-      if (sorted.includes(current)) select.value = current;
+    rootEl.innerHTML = `
+      <button type="button" class="dd-btn">
+        <span class="dd-label">${opts.placeholder}</span>
+        <span class="dd-meta">0 selezionati</span>
+      </button>
+      <div class="dd-panel">
+        <div class="dd-head">
+          <input class="dd-search" placeholder="Cerca..." />
+          <div class="dd-actions">
+            <button type="button" data-act="all">Tutti</button>
+            <button type="button" data-act="none">Nessuno</button>
+          </div>
+        </div>
+        <div class="dd-list"></div>
+      </div>
+    `;
+
+    const btn = rootEl.querySelector(".dd-btn");
+    const label = rootEl.querySelector(".dd-label");
+    const meta = rootEl.querySelector(".dd-meta");
+    const panel = rootEl.querySelector(".dd-panel");
+    const list = rootEl.querySelector(".dd-list");
+    const search = rootEl.querySelector(".dd-search");
+
+    let values = [];
+    const selected = new Set();
+
+    function setOpen(open){
+      rootEl.classList.toggle("open", open);
+      if (open) {
+        search.value = "";
+        renderList();
+        setTimeout(() => search.focus(), 0);
+      }
     }
+
+    btn.addEventListener("click", () => setOpen(!rootEl.classList.contains("open")));
+
+    document.addEventListener("click", (e) => {
+      if (!rootEl.contains(e.target)) setOpen(false);
+    });
+    panel.addEventListener("click", (e) => e.stopPropagation());
+
+    function updateHeader(){
+      const n = selected.size;
+      meta.textContent = `${n} selezionati`;
+      if (n === 0) label.textContent = opts.placeholder;
+      else if (n === 1) label.textContent = [...selected][0];
+      else label.textContent = `${n} selezionati`;
+    }
+
+    function renderList(){
+      const q = norm(search.value);
+      const filtered = q ? values.filter(v => norm(v).includes(q)) : values;
+
+      list.innerHTML = filtered.map(v => {
+        const checked = selected.has(v) ? "checked" : "";
+        return `
+          <label class="dd-item">
+            <input type="checkbox" value="${v}" ${checked} />
+            <span>${v}</span>
+          </label>
+        `;
+      }).join("");
+
+      list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener("change", (e) => {
+          const v = e.target.value;
+          if (e.target.checked) selected.add(v);
+          else selected.delete(v);
+          updateHeader();
+          opts.onChange([...selected]);
+        });
+      });
+    }
+
+    search.addEventListener("input", renderList);
+
+    rootEl.querySelectorAll(".dd-actions button").forEach(b => {
+      b.addEventListener("click", () => {
+        const act = b.getAttribute("data-act");
+        if (act === "all") values.forEach(v => selected.add(v));
+        if (act === "none") selected.clear();
+        updateHeader();
+        renderList();
+        opts.onChange([...selected]);
+      });
+    });
+
+    return {
+      setValues(newValues){
+        values = [...newValues].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
+        // mantieni selezioni valide
+        for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
+        updateHeader();
+        renderList();
+      },
+      clear(){
+        selected.clear();
+        updateHeader();
+        renderList();
+        opts.onChange([]);
+      },
+      getSelected(){
+        return [...selected];
+      }
+    };
+  }
+
+  // Dropdown instances
+  const ddGroup = createCheckboxDropdown(els.ddGroup, {
+    placeholder: "Tutti i gruppi",
+    onChange: (arr) => {
+      state.selectedGroups = new Set(arr);
+      applyFilters();
+    }
+  });
+
+  const ddService = createCheckboxDropdown(els.ddService, {
+    placeholder: "Tutti i servizi",
+    onChange: (arr) => {
+      state.selectedServices = new Set(arr);
+      applyFilters();
+    }
+  });
+
+  // single selects
+  function buildSingleSelect(select, values, allLabel = "Tutte"){
+    const current = select.value;
+    const sorted = [...values].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
+    select.innerHTML =
+      `<option value="">${allLabel}</option>` +
+      sorted.map(v => `<option value="${v}">${v}</option>`).join("");
+    if (sorted.includes(current)) select.value = current;
   }
 
   function rebuildFilters(features){
@@ -238,17 +403,10 @@
       }
     }
 
-    buildOptionList(els.category, cats, "Tutte");
-    buildOptionList(els.city, cities, "Tutte");
-    buildOptionList(els.service, services); // multi
-    buildOptionList(els.group, groups);     // multi
-  }
-
-  function featureText(p){
-    return norm([
-      p.name, p.address_line_1, p.address_city, p.address_district,
-      p.address_zipcode, p.establishment_category, p.services, p.group_name, p.hubspot_id
-    ].filter(Boolean).join(" "));
+    buildSingleSelect(els.category, cats, "Tutte");
+    buildSingleSelect(els.city, cities, "Tutte");
+    ddGroup.setValues(groups);
+    ddService.setValues(services);
   }
 
   function applyFilters(){
@@ -256,8 +414,8 @@
     const cat = els.category.value;
     const city = els.city.value;
 
-    const selectedServices = getSelectedValues(els.service); // multi
-    const selectedGroups = getSelectedValues(els.group);     // multi
+    const selectedGroups = [...state.selectedGroups];
+    const selectedServices = [...state.selectedServices];
 
     cluster.clearLayers();
     let visible = 0;
@@ -265,21 +423,19 @@
     for (const item of state.items){
       const p = item.feature.properties || {};
 
-      // single filters
       if (cat && p.establishment_category !== cat) continue;
       if (city && p.address_city !== city) continue;
 
-      // multi group (OR)
+      // groups OR
       if (selectedGroups.length > 0 && !selectedGroups.includes(p.group_name)) continue;
 
-      // multi services (OR)
+      // services OR
       if (selectedServices.length > 0) {
         const itemServices = (p.services || "").split(",").map(s => s.trim()).filter(Boolean);
         const match = selectedServices.some(s => itemServices.includes(s));
         if (!match) continue;
       }
 
-      // search
       if (q && !featureText(p).includes(q)) continue;
 
       cluster.addLayer(item.marker);
@@ -313,16 +469,14 @@
   els.q.addEventListener("input", applyFilters);
   els.category.addEventListener("change", applyFilters);
   els.city.addEventListener("change", applyFilters);
-  els.service.addEventListener("change", applyFilters); // multi triggers change
-  els.group.addEventListener("change", applyFilters);   // multi triggers change
 
   els.reset.addEventListener("click", (e) => {
     e.preventDefault();
     els.q.value = "";
     els.category.value = "";
     els.city.value = "";
-    clearMultiSelect(els.service);
-    clearMultiSelect(els.group);
+    ddGroup.clear();
+    ddService.clear();
     applyFilters();
   });
 
