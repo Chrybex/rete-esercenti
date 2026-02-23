@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rete Esercenti Convenzionati</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+
+  <style>
+    :root{
+      --brand:#ff8d78; --brand-dark:#f9735c;
+      --bg:#f8fafc; --text:#0f172a; --muted:#64748b;
+      --card:#fff; --border:rgba(15,23,42,.08); --shadow:0 10px 30px rgba(2,6,23,.06);
+      --radius:14px;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto; background:var(--bg); color:var(--text); }
+    .topbar{ background:#fff; border-bottom:4px solid var(--brand); position:sticky; top:0; z-index:10; }
+    .topbar-inner{ max-width:1100px; margin:0 auto; padding:18px 20px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .btn{ background:var(--brand); color:#fff; padding:9px 14px; border-radius:8px; font-size:14px; text-decoration:none; font-weight:600; transition:.2s; white-space:nowrap; }
+    .btn:hover{ background:var(--brand-dark); }
+
+    .layout{ max-width:1100px; margin:18px auto 40px; padding:0 20px; display:grid; grid-template-columns:360px 1fr; gap:18px; align-items:start; }
+    .panel{ background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); border:1px solid var(--border); padding:16px; }
+    .panel h1{ font-size:18px; margin:0; }
+    .panel p{ margin:10px 0 0; color:var(--muted); line-height:1.5; font-size:13px; }
+
+    .kpis{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+    .kpi{ border:1px solid var(--border); border-radius:12px; padding:10px; background:#fff; }
+    .kpi .big{ font-size:20px; font-weight:800; color:var(--brand); }
+    .kpi .label{ font-size:12px; color:var(--muted); margin-top:2px; }
+
+    label{ display:block; margin-top:12px; font-size:12px; color:var(--muted); }
+    input, select{ width:100%; margin-top:6px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; font-size:14px; }
+    .hint{ margin-top:10px; font-size:12px; color:var(--muted); line-height:1.4; }
+
+    .map-card{ background:#fff; border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); border:1px solid var(--border); }
+    .map-header{ padding:14px 16px; font-size:13px; color:var(--muted); border-bottom:1px solid var(--border); }
+    #map{ height:75vh; min-height:520px; }
+
+    footer{ text-align:center; padding:24px; font-size:13px; color:var(--muted); }
+
+    @media (max-width: 900px){
+      .layout{ grid-template-columns:1fr; }
+      #map{ height:70vh; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div style="font-weight:800;">Rete Esercenti Convenzionati</div>
+      <a class="btn" href="#" id="reset">Reset filtri</a>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <h1>Mappa indipendente da Google</h1>
+      <p>
+        I punti vengono caricati da <code>locations.geojson</code> (esportato dal tuo KMZ).
+        Usa ricerca e filtri per trovare rapidamente l’esercente.
+      </p>
+
+      <div class="kpis">
+        <div class="kpi">
+          <div class="big" id="kpi-visible">—</div>
+          <div class="label">Esercenti visibili</div>
+        </div>
+        <div class="kpi">
+          <div class="big" id="kpi-total">—</div>
+          <div class="label">Esercenti totali</div>
+        </div>
+      </div>
+
+      <label for="q">Cerca (nome, indirizzo, città, servizi)</label>
+      <input id="q" placeholder="Es. supermercato, Milano, Buoni Pasto..." />
+
+      <label for="category">Categoria</label>
+      <select id="category">
+        <option value="">Tutte</option>
+      </select>
+
+      <label for="service">Servizio</label>
+      <select id="service">
+        <option value="">Tutti</option>
+      </select>
+
+      <label for="city">Città</label>
+      <select id="city">
+        <option value="">Tutte</option>
+      </select>
+
+      <div class="hint">
+        Nota: per traffico alto in produzione, evita di usare direttamente le tile pubbliche OSM e passa a un provider (MapTiler/Mapbox/OpenMapTiles).
+      </div>
+    </div>
+
+    <div class="map-card">
+      <div class="map-header">
+        Mappa interattiva — zoom, cluster e popup con dettagli esercente
+      </div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <footer>© 2026 — Rete Esercenti Convenzionati</footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <script>
+    const map = L.map("map", { scrollWheelZoom: true });
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map);
+
+    const cluster = L.markerClusterGroup({ showCoverageOnHover: false });
+    cluster.addTo(map);
+
+    const els = {
+      q: document.getElementById("q"),
+      category: document.getElementById("category"),
+      service: document.getElementById("service"),
+      city: document.getElementById("city"),
+      reset: document.getElementById("reset"),
+      kpiVisible: document.getElementById("kpi-visible"),
+      kpiTotal: document.getElementById("kpi-total"),
+    };
+
+    const state = { geojson: null, items: [] };
+
+    const norm = (s) => (s ?? "").toString().trim().toLowerCase();
+
+    function popupHtml(p){
+      const esc = (x) => (x ?? "").toString()
+        .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+
+      const name = esc(p.name || "Esercente");
+      const cat = p.establishment_category ? `<div><strong>Categoria:</strong> ${esc(p.establishment_category)}</div>` : "";
+      const services = p.services ? `<div><strong>Servizi:</strong> ${esc(p.services)}</div>` : "";
+      const addrParts = [p.address_line_1, p.address_zipcode, p.address_city, p.address_district].filter(Boolean);
+      const address = addrParts.length ? `<div><strong>Indirizzo:</strong> ${esc(addrParts.join(", "))}</div>` : "";
+      const group = p.group_name ? `<div><strong>Gruppo:</strong> ${esc(p.group_name)}</div>` : "";
+      const hubspot = p.hubspot_id ? `<div style="color:#64748b;font-size:12px;margin-top:6px;">HubSpot id: ${esc(p.hubspot_id)}</div>` : "";
+
+      return `<div style="min-width:240px">
+        <div style="font-weight:800;margin-bottom:6px;">${name}</div>
+        ${cat}${services}${address}${group}${hubspot}
+      </div>`;
+    }
+
+    function buildOptionList(select, values){
+      const current = select.value;
+      select.innerHTML = '<option value="">Tutte</option>' +
+        [...values].sort((a,b)=>a.localeCompare(b, "it"))
+          .map(v => `<option value="${v}">${v}</option>`).join("");
+      if ([...values].includes(current)) select.value = current;
+    }
+
+    function rebuildFilters(features){
+      const cats = new Set();
+      const cities = new Set();
+      const services = new Set();
+
+      for (const f of features){
+        const p = f.properties || {};
+        if (p.establishment_category) cats.add(p.establishment_category);
+        if (p.address_city) cities.add(p.address_city);
+        if (p.services){
+          // split on comma to allow filter on single service
+          p.services.split(",").map(s => s.trim()).filter(Boolean).forEach(s => services.add(s));
+        }
+      }
+
+      buildOptionList(els.category, cats);
+      buildOptionList(els.city, cities);
+      // services list can be large; still ok, but you can remove if you prefer
+      buildOptionList(els.service, services);
+    }
+
+    function featureText(p){
+      return norm([
+        p.name, p.address_line_1, p.address_city, p.address_district,
+        p.address_zipcode, p.establishment_category, p.services, p.group_name, p.hubspot_id
+      ].filter(Boolean).join(" "));
+    }
+
+    function applyFilters(){
+      const q = norm(els.q.value);
+      const cat = els.category.value;
+      const city = els.city.value;
+      const service = els.service.value;
+
+      cluster.clearLayers();
+
+      let visible = 0;
+
+      for (const item of state.items){
+        const p = item.feature.properties || {};
+        if (cat && p.establishment_category !== cat) continue;
+        if (city && p.address_city !== city) continue;
+        if (service && !(p.services || "").split(",").map(s=>s.trim()).includes(service)) continue;
+        if (q && !featureText(p).includes(q)) continue;
+
+        cluster.addLayer(item.marker);
+        visible += 1;
+      }
+
+      els.kpiVisible.textContent = visible.toLocaleString("it-IT");
+    }
+
+    async function init(){
+      const res = await fetch("./locations.geojson", { cache: "no-store" });
+      if (!res.ok) throw new Error("Impossibile caricare locations.geojson");
+      const geojson = await res.json();
+      state.geojson = geojson;
+
+      els.kpiTotal.textContent = geojson.features.length.toLocaleString("it-IT");
+
+      state.items = geojson.features.map(f => {
+        const [lng, lat] = f.geometry.coordinates;
+        const marker = L.marker([lat, lng]).bindPopup(popupHtml(f.properties || {}));
+        return { feature: f, marker };
+      });
+
+      // Fit bounds
+      const latlngs = state.items.map(x => x.marker.getLatLng());
+      map.fitBounds(L.latLngBounds(latlngs).pad(0.08));
+
+      rebuildFilters(geojson.features);
+      applyFilters();
+    }
+
+    els.q.addEventListener("input", applyFilters);
+    els.category.addEventListener("change", applyFilters);
+    els.city.addEventListener("change", applyFilters);
+    els.service.addEventListener("change", applyFilters);
+
+    els.reset.addEventListener("click", (e) => {
+      e.preventDefault();
+      els.q.value = "";
+      els.category.value = "";
+      els.city.value = "";
+      els.service.value = "";
+      applyFilters();
+    });
+
+    init().catch(err => {
+      console.error(err);
+      alert("Errore inizializzazione mappa. Controlla console e locations.geojson.");
+    });
+  </script>
+</body>
+</html>
