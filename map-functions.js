@@ -12,7 +12,7 @@ const cluster = L.markerClusterGroup({ showCoverageOnHover: false });
 cluster.addTo(map);
 
 const els = {
-  // ✅ rimosso q (filtro generico)
+  // ✅ niente filtro q generico
   category: document.getElementById("category"),
   reset: document.getElementById("reset"),
   kpiVisible: document.getElementById("kpi-visible"),
@@ -29,16 +29,12 @@ const els = {
 const state = {
   geojson: null,
   items: [],
+  initialBounds: null,
 
-  // GROUPS
-  groupMode: "auto", // "auto" | "manual"
   selectedGroups: new Set(),
-  allGroups: new Set(),
-
-  // SERVICES
   selectedServices: new Set(),
 
-  // ✅ GEO: separo manual vs derived
+  // GEO: separo manual vs derived (come avevi già)
   manualRegions: new Set(),
   derivedRegions: new Set(),
   selectedProvinces: new Set(),
@@ -48,16 +44,7 @@ const state = {
 const norm = (s) => (s ?? "").toString().trim().toLowerCase();
 
 // ===========================
-// Helpers: Group
-// ===========================
-const GROUP_INDEPENDENT = "Indipendenti";
-function groupValue(p){
-  const g = (p?.group_name ?? "").toString().trim();
-  return g ? g : GROUP_INDEPENDENT;
-}
-
-// ===========================
-// Province -> { name, region }
+// Province info
 // ===========================
 const PROVINCE_INFO = {
   AQ:{name:"L'Aquila", region:"Abruzzo"}, CH:{name:"Chieti", region:"Abruzzo"}, PE:{name:"Pescara", region:"Abruzzo"}, TE:{name:"Teramo", region:"Abruzzo"},
@@ -94,8 +81,11 @@ const provCode = (p) => (p?.address_district || "").toUpperCase().trim();
 const provRegion = (code) => PROVINCE_INFO[code]?.region || "";
 const provLabel = (code) => PROVINCE_INFO[code] ? `${code} — ${PROVINCE_INFO[code].name}` : code;
 
+// ✅ gruppo: se manca -> "Indipendenti"
+const groupValue = (p) => (p?.group_name && p.group_name.trim()) ? p.group_name.trim() : "Indipendenti";
+
 // ===========================
-// Region helpers (manual vs derived)
+// Region helpers
 // ===========================
 function effectiveRegionsSet(){
   return new Set([...state.manualRegions, ...state.derivedRegions]);
@@ -118,7 +108,7 @@ function recomputeDerivedRegions(){
   if (state.selectedCities.size > 0){
     for (const item of state.items){
       const p = item.feature.properties || {};
-      const city = p.address_city || "";
+      const city = (p.address_city || "").trim();
       if (!city) continue;
       if (!state.selectedCities.has(city)) continue;
 
@@ -130,6 +120,9 @@ function recomputeDerivedRegions(){
   state.derivedRegions = derived;
 }
 
+// ===========================
+// Popup
+// ===========================
 function popupHtml(p){
   const esc = (x) => (x ?? "").toString()
     .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
@@ -149,29 +142,20 @@ function popupHtml(p){
 }
 
 // ===========================
-// Checkbox dropdown (no lib) + search + optional toggle
+// Checkbox dropdown (con search dentro dropdown)
 // ===========================
 function createCheckboxDropdown(rootEl, opts){
   rootEl.classList.add("dd");
-
-  const showToggle = !!opts.modeToggle; // solo per "Gruppi" in questo caso
 
   rootEl.innerHTML = `
     <button type="button" class="dd-btn">
       <span class="dd-label">${opts.placeholder}</span>
       <span class="dd-meta">0 selezionati</span>
     </button>
-
     <div class="dd-panel">
       <div class="dd-head">
         <input class="dd-search" placeholder="Cerca..." />
         <div class="dd-actions">
-          ${showToggle ? `
-            <label class="dd-toggle" style="display:flex;align-items:center;gap:6px;margin-right:8px;user-select:none;">
-              <input type="checkbox" class="dd-toggle-input" checked />
-              <span class="dd-toggle-label">AUTO</span>
-            </label>
-          ` : ``}
           <button type="button" class="btn" data-act="all">Tutti</button>
           <button type="button" class="btn" data-act="none">Reset</button>
         </div>
@@ -187,9 +171,6 @@ function createCheckboxDropdown(rootEl, opts){
   const list = rootEl.querySelector(".dd-list");
   const search = rootEl.querySelector(".dd-search");
 
-  const toggleInput = rootEl.querySelector(".dd-toggle-input");
-  const toggleLabel = rootEl.querySelector(".dd-toggle-label");
-
   let values = [];
   const selected = new Set();
 
@@ -203,7 +184,10 @@ function createCheckboxDropdown(rootEl, opts){
   }
 
   btn.addEventListener("click", () => setOpen(!rootEl.classList.contains("open")));
-  document.addEventListener("click", (e) => { if (!rootEl.contains(e.target)) setOpen(false); });
+
+  document.addEventListener("click", (e) => {
+    if (!rootEl.contains(e.target)) setOpen(false);
+  });
   panel.addEventListener("click", (e) => e.stopPropagation());
 
   function updateHeader(){
@@ -234,42 +218,31 @@ function createCheckboxDropdown(rootEl, opts){
         if (e.target.checked) selected.add(v);
         else selected.delete(v);
         updateHeader();
-        opts.onChange([...selected], { user: true });
+        opts.onChange([...selected]);
       });
     });
 
-    if (opts.afterRender) opts.afterRender();
+    // hook opzionale per patch label (province)
+    if (typeof opts.afterRender === "function") opts.afterRender();
   }
 
   search.addEventListener("input", renderList);
 
-  rootEl.querySelectorAll(".dd-actions button[data-act]").forEach(b => {
+  rootEl.querySelectorAll(".dd-actions button").forEach(b => {
     b.addEventListener("click", () => {
       const act = b.getAttribute("data-act");
       if (act === "all") values.forEach(v => selected.add(v));
       if (act === "none") selected.clear();
       updateHeader();
       renderList();
-      opts.onChange([...selected], { user: true });
+      opts.onChange([...selected]);
     });
   });
 
-  if (showToggle && toggleInput && toggleLabel){
-    toggleInput.addEventListener("change", () => {
-      const isAuto = toggleInput.checked;
-      toggleLabel.textContent = isAuto ? "AUTO" : "MANUAL";
-      if (opts.onToggleMode) opts.onToggleMode(isAuto ? "auto" : "manual");
-    });
-  }
-
   return {
-    setMode(mode){
-      if (!showToggle || !toggleInput || !toggleLabel) return;
-      toggleInput.checked = (mode === "auto");
-      toggleLabel.textContent = (mode === "auto") ? "AUTO" : "MANUAL";
-    },
     setValues(newValues){
       values = [...newValues].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
+      // mantieni selezioni valide
       for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
       updateHeader();
       renderList();
@@ -280,13 +253,13 @@ function createCheckboxDropdown(rootEl, opts){
       for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
       updateHeader();
       renderList();
-      if (!silent) opts.onChange([...selected], { user: false });
+      if (!silent) opts.onChange([...selected]);
     },
     clear({ silent = false } = {}){
       selected.clear();
       updateHeader();
       renderList();
-      if (!silent) opts.onChange([], { user: false });
+      if (!silent) opts.onChange([]);
     },
     getSelected(){
       return [...selected];
@@ -294,7 +267,7 @@ function createCheckboxDropdown(rootEl, opts){
   };
 }
 
-// Patch: mostra "MI — Milano" nel dropdown province mantenendo value="MI"
+// patch: mostra "MI — Milano" nel dropdown province mantenendo value="MI"
 function setProvinceLabels(){
   const list = els.ddProvince.querySelector(".dd-list");
   if (!list) return;
@@ -306,42 +279,22 @@ function setProvinceLabels(){
 }
 
 // ===========================
-// Dropdowns
+// Dropdown instances
 // ===========================
-
-// ✅ Gruppi: AUTO/MANUAL + auto-selection
 const ddGroup = createCheckboxDropdown(els.ddGroup, {
   placeholder: "Tutti i gruppi",
-  modeToggle: true,
-  onToggleMode: (mode) => {
-    state.groupMode = mode;
-    ddGroup.setMode(mode);
-
-    // se torno in AUTO: azzero filtro gruppo e riallineo subito ai gruppi visibili
-    if (mode === "auto") {
-      state.selectedGroups.clear();
-      // ricalcolo con filtri correnti e aggiorno UI
-      updateGroupsAutoFromCurrentView();
-      applyFilters();
-    } else {
-      // in MANUAL: lascia la selezione corrente come filtro
-      applyFilters();
-    }
-  },
-  onChange: (arr, meta) => {
-    // se l'utente cambia gruppi => passa a MANUAL
-    if (meta?.user) {
-      state.groupMode = "manual";
-      ddGroup.setMode("manual");
-    }
+  onChange: (arr) => {
     state.selectedGroups = new Set(arr);
-    applyFilters();
+    applyFilters(); // poi auto-sync dei gruppi avviene dentro applyFilters()
   }
 });
 
 const ddService = createCheckboxDropdown(els.ddService, {
   placeholder: "Tutti i servizi",
-  onChange: (arr) => { state.selectedServices = new Set(arr); applyFilters(); }
+  onChange: (arr) => {
+    state.selectedServices = new Set(arr);
+    applyFilters();
+  }
 });
 
 const ddRegion = createCheckboxDropdown(els.ddRegion, {
@@ -349,6 +302,7 @@ const ddRegion = createCheckboxDropdown(els.ddRegion, {
   onChange: (arr) => {
     state.manualRegions = new Set(arr);
 
+    // se ho scope manuale, ripulisci province/città fuori scope
     if (hasManualScope()){
       for (const code of [...state.selectedProvinces]){
         const reg = provRegion(code);
@@ -358,7 +312,7 @@ const ddRegion = createCheckboxDropdown(els.ddRegion, {
         let ok = false;
         for (const item of state.items){
           const p = item.feature.properties || {};
-          if ((p.address_city || "") !== c) continue;
+          if (((p.address_city || "").trim()) !== c) continue;
           const reg = provRegion(provCode(p));
           if (reg && state.manualRegions.has(reg)) { ok = true; break; }
         }
@@ -376,7 +330,7 @@ const ddRegion = createCheckboxDropdown(els.ddRegion, {
 
 const ddProvince = createCheckboxDropdown(els.ddProvince, {
   placeholder: "Tutte le province",
-  afterRender: () => setProvinceLabels(),
+  afterRender: setProvinceLabels,
   onChange: (arr) => {
     state.selectedProvinces = new Set(arr);
 
@@ -402,7 +356,7 @@ const ddCity = createCheckboxDropdown(els.ddCity, {
 });
 
 // ===========================
-// Single select: category
+// Category select
 // ===========================
 function buildSingleSelect(select, values, allLabel = "Tutte"){
   const current = select.value;
@@ -414,7 +368,7 @@ function buildSingleSelect(select, values, allLabel = "Tutte"){
 }
 
 // ===========================
-// Geo cascade options
+// Geo cascade
 // ===========================
 function computeGeoOptions(){
   const provinces = new Set();
@@ -424,7 +378,7 @@ function computeGeoOptions(){
     const p = item.feature.properties || {};
     const code = provCode(p);
     const reg = provRegion(code);
-    const city = p.address_city || "";
+    const city = ((p.address_city || "").trim());
 
     if (!inManualScope(reg)) continue;
 
@@ -457,157 +411,133 @@ function cascadeGeoOptions(){
 }
 
 // ===========================
-// Build filters (init)
+// Rebuild filters from data
 // ===========================
 function rebuildFilters(features){
   const cats = new Set();
   const services = new Set();
-  const groups = new Set();
 
   const regionsAll = new Set();
   const provincesAll = new Set();
   const citiesAll = new Set();
+  const groupsAll = new Set();
 
   for (const f of features){
     const p = f.properties || {};
     if (p.establishment_category) cats.add(p.establishment_category);
 
-    // ✅ gruppi, includendo Indipendenti
-    groups.add(groupValue(p));
+    // gruppi + indipendenti
+    groupsAll.add(groupValue(p));
 
     const code = provCode(p);
     const reg = provRegion(code);
     if (reg) regionsAll.add(reg);
     if (code) provincesAll.add(code);
-    if (p.address_city) citiesAll.add(p.address_city);
+
+    const city = ((p.address_city || "").trim());
+    if (city) citiesAll.add(city);
 
     if (p.services){
       p.services.split(",").map(s => s.trim()).filter(Boolean).forEach(s => services.add(s));
     }
   }
 
-  state.allGroups = groups;
-
   buildSingleSelect(els.category, cats, "Tutte");
 
   ddService.setValues(services);
-
   ddRegion.setValues(regionsAll);
   ddProvince.setValues(provincesAll);
   ddCity.setValues(citiesAll);
 
-  // reset geo
+  // gruppi iniziali (poi saranno sincronizzati in applyFilters)
+  ddGroup.setValues(groupsAll);
+
+  // clean selections
+  ddService.setSelected([], { silent: true });
   ddRegion.setSelected([], { silent: true });
   ddProvince.setSelected([], { silent: true });
   ddCity.setSelected([], { silent: true });
+  ddGroup.setSelected([], { silent: true });
 
+  state.selectedServices.clear();
   state.manualRegions.clear();
   state.derivedRegions.clear();
   state.selectedProvinces.clear();
   state.selectedCities.clear();
-
-  // gruppi in AUTO al boot
-  state.groupMode = "auto";
-  ddGroup.setMode("auto");
   state.selectedGroups.clear();
 
   cascadeGeoOptions();
-
-  // inizializza gruppi auto su "tutto visibile" (quindi tutti i gruppi presenti nel dataset)
-  ddGroup.setValues([...state.allGroups]);
-  ddGroup.setSelected([...state.allGroups], { silent: true });
 }
 
 // ===========================
-// Core matching (no group filter inside if AUTO)
+// Group sync (auto-selezione + auto-list in base ai pin visibili)
 // ===========================
-function matchesNonGroupFilters(p){
+function syncGroupsFromVisible(visibleGroupsSet){
+  const visibleGroups = [...visibleGroupsSet].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
+
+  ddGroup.setValues(visibleGroups);
+  ddGroup.setSelected(visibleGroups, { silent: true });
+  state.selectedGroups = new Set(visibleGroups);
+}
+
+// ===========================
+// Apply filters
+// ===========================
+function applyFilters(){
   const cat = els.category.value;
 
-  // category
-  if (cat && p.establishment_category !== cat) return false;
-
-  // geo
   const regionsSel = [...effectiveRegionsSet()];
   const provincesSel = [...state.selectedProvinces];
   const citiesSel = [...state.selectedCities];
 
-  const code = provCode(p);
-  const reg = provRegion(code);
-  const city = p.address_city || "";
-
-  if (regionsSel.length > 0 && !regionsSel.includes(reg)) return false;
-  if (provincesSel.length > 0 && !provincesSel.includes(code)) return false;
-  if (citiesSel.length > 0 && !citiesSel.includes(city)) return false;
-
-  // services OR
   const selectedServices = [...state.selectedServices];
-  if (selectedServices.length > 0) {
-    const itemServices = (p.services || "").split(",").map(s => s.trim()).filter(Boolean);
-    const match = selectedServices.some(s => itemServices.includes(s));
-    if (!match) return false;
-  }
-
-  return true;
-}
-
-function matchesGroupFilter(p){
-  // in AUTO: NON filtra
-  if (state.groupMode === "auto") return true;
-
-  // in MANUAL: filtra solo se c'è selezione
   const selectedGroups = [...state.selectedGroups];
-  if (selectedGroups.length === 0) return true;
-
-  const g = groupValue(p);
-  return selectedGroups.includes(g);
-}
-
-// ===========================
-// AUTO GROUPS: compute from current (non-group) view
-// ===========================
-function updateGroupsAutoFromCurrentView(){
-  if (state.groupMode !== "auto") return;
-
-  const visibleGroups = new Set();
-
-  for (const item of state.items){
-    const p = item.feature.properties || {};
-    if (!matchesNonGroupFilters(p)) continue;
-
-    visibleGroups.add(groupValue(p));
-  }
-
-  // Se non c'è niente visibile, lascia almeno le opzioni vuote (e nessuna selezione)
-  ddGroup.setValues([...visibleGroups]);
-  ddGroup.setSelected([...visibleGroups], { silent: true });
-}
-
-// ===========================
-// Apply filters (render pins + update KPI + group auto)
-// ===========================
-function applyFilters(){
-  // 1) se AUTO: prima aggiorno i gruppi in base a ciò che rimane visibile dagli altri filtri
-  updateGroupsAutoFromCurrentView();
 
   cluster.clearLayers();
   let visible = 0;
 
+  // per auto-sync gruppi
+  const groupsVisible = new Set();
+
   for (const item of state.items){
     const p = item.feature.properties || {};
 
-    if (!matchesNonGroupFilters(p)) continue;
-    if (!matchesGroupFilter(p)) continue;
+    if (cat && p.establishment_category !== cat) continue;
+
+    const code = provCode(p);
+    const reg = provRegion(code);
+    const city = ((p.address_city || "").trim());
+
+    // geo (AND)
+    if (regionsSel.length > 0 && !regionsSel.includes(reg)) continue;
+    if (provincesSel.length > 0 && !provincesSel.includes(code)) continue;
+    if (citiesSel.length > 0 && !citiesSel.includes(city)) continue;
+
+    // servizi (OR)
+    if (selectedServices.length > 0) {
+      const itemServices = (p.services || "").split(",").map(s => s.trim()).filter(Boolean);
+      const match = selectedServices.some(s => itemServices.includes(s));
+      if (!match) continue;
+    }
+
+    // gruppi (AND) — ma usando "Indipendenti" se manca
+    const g = groupValue(p);
+    if (selectedGroups.length > 0 && !selectedGroups.includes(g)) continue;
 
     cluster.addLayer(item.marker);
     visible += 1;
+
+    groupsVisible.add(g);
   }
 
   els.kpiVisible.textContent = visible.toLocaleString("it-IT");
+
+  // ✅ auto-seleziona e auto-filtra SEMPRE i gruppi in base ai pin rimasti
+  syncGroupsFromVisible(groupsVisible);
 }
 
 // ===========================
-// Init
+// Init + initial bounds
 // ===========================
 async function init(){
   const res = await fetch("./locations.geojson", { cache: "no-store" });
@@ -624,36 +554,48 @@ async function init(){
   });
 
   const latlngs = state.items.map(x => x.marker.getLatLng());
-  map.fitBounds(L.latLngBounds(latlngs).pad(0.08));
+  state.initialBounds = L.latLngBounds(latlngs).pad(0.08);
+  map.fitBounds(state.initialBounds);
 
   rebuildFilters(geojson.features);
   applyFilters();
 }
 
-els.category.addEventListener("change", applyFilters);
+// ===========================
+// Reset (resetta TUTTO + fitbounds)
+// ===========================
+function resetAll(e){
+  if (e) e.preventDefault();
 
-els.reset.addEventListener("click", (e) => {
-  e.preventDefault();
   els.category.value = "";
 
+  ddGroup.clear({ silent: true });
   ddService.clear({ silent: true });
   ddRegion.clear({ silent: true });
   ddProvince.clear({ silent: true });
   ddCity.clear({ silent: true });
 
+  state.selectedGroups.clear();
   state.selectedServices.clear();
   state.manualRegions.clear();
   state.derivedRegions.clear();
   state.selectedProvinces.clear();
   state.selectedCities.clear();
 
-  // reset gruppi
-  state.groupMode = "auto";
-  ddGroup.setMode("auto");
-  state.selectedGroups.clear();
-
   if (state.geojson?.features) rebuildFilters(state.geojson.features);
+
   applyFilters();
+
+  if (state.initialBounds) map.fitBounds(state.initialBounds);
+}
+
+// listeners
+els.category.addEventListener("change", applyFilters);
+els.reset.addEventListener("click", resetAll);
+
+// se vuoi che QUALSIASI bottone resetti:
+document.querySelectorAll("[data-reset-map]").forEach(el => {
+  el.addEventListener("click", resetAll);
 });
 
 init().catch(err => {
