@@ -173,20 +173,14 @@
 <label>Servizio</label>
 <div class="dd" id="dd-service"></div>
 
-      <label for="region">Regione</label>
-<select id="region">
-  <option value="">Tutte</option>
-</select>
+     <label>Regione</label>
+<div class="dd" id="dd-region"></div>
 
-<label for="province">Provincia</label>
-<select id="province">
-  <option value="">Tutte</option>
-</select>
+<label>Provincia</label>
+<div class="dd" id="dd-province"></div>
 
-<label for="city">Città</label>
-<select id="city">
-  <option value="">Tutte</option>
-</select>
+<label>Città</label>
+<div class="dd" id="dd-city"></div>
 
     </div>
 
@@ -204,7 +198,7 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
- <script>
+<script>
   const map = L.map("map", { scrollWheelZoom: true });
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -218,30 +212,33 @@
   const els = {
     q: document.getElementById("q"),
     category: document.getElementById("category"),
-
-    // ✅ NEW: regione + provincia + città (cascade)
-    region: document.getElementById("region"),
-    province: document.getElementById("province"),
-    city: document.getElementById("city"),
-
     reset: document.getElementById("reset"),
     kpiVisible: document.getElementById("kpi-visible"),
     kpiTotal: document.getElementById("kpi-total"),
 
+    // dropdown checkbox
     ddGroup: document.getElementById("dd-group"),
     ddService: document.getElementById("dd-service"),
+    ddRegion: document.getElementById("dd-region"),
+    ddProvince: document.getElementById("dd-province"),
+    ddCity: document.getElementById("dd-city"),
   };
 
   const state = {
     geojson: null,
     items: [],
+
     selectedGroups: new Set(),
     selectedServices: new Set(),
+
+    selectedRegions: new Set(),
+    selectedProvinces: new Set(),
+    selectedCities: new Set(),
   };
 
   const norm = (s) => (s ?? "").toString().trim().toLowerCase();
 
-  // ✅ Province -> { name, region }
+  // Province -> { name, region }
   const PROVINCE_INFO = {
     // Abruzzo
     AQ:{name:"L'Aquila", region:"Abruzzo"}, CH:{name:"Chieti", region:"Abruzzo"}, PE:{name:"Pescara", region:"Abruzzo"}, TE:{name:"Teramo", region:"Abruzzo"},
@@ -293,16 +290,9 @@
     VE:{name:"Venezia", region:"Veneto"}, VI:{name:"Vicenza", region:"Veneto"}, VR:{name:"Verona", region:"Veneto"},
   };
 
-  function provCode(p){
-    return (p?.address_district || "").toUpperCase().trim();
-  }
-  function provRegion(code){
-    return PROVINCE_INFO[code]?.region || "";
-  }
-  function provLabel(code){
-    const info = PROVINCE_INFO[code];
-    return info ? `${code} — ${info.name}` : code;
-  }
+  const provCode = (p) => (p?.address_district || "").toUpperCase().trim();
+  const provRegion = (code) => PROVINCE_INFO[code]?.region || "";
+  const provLabel = (code) => PROVINCE_INFO[code] ? `${code} — ${PROVINCE_INFO[code].name}` : code;
 
   function popupHtml(p){
     const esc = (x) => (x ?? "").toString()
@@ -330,6 +320,7 @@
   }
 
   // -------- Checkbox dropdown (no librerie) --------
+  // Aggiunto: setSelected(values, {silent}) per preselezionare da codice
   function createCheckboxDropdown(rootEl, opts){
     rootEl.classList.add("dd");
 
@@ -425,15 +416,32 @@
     return {
       setValues(newValues){
         values = [...newValues].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
+        // mantieni selezioni valide
         for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
         updateHeader();
         renderList();
       },
-      clear(){
+      setSelected(arr, { silent = false } = {}){
+        selected.clear();
+        (arr || []).forEach(v => { if (v) selected.add(v); });
+        // rimuovi eventuali selezioni non presenti in values
+        for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
+        updateHeader();
+        renderList();
+        if (!silent) opts.onChange([...selected]);
+      },
+      addSelected(arr, { silent = false } = {}){
+        (arr || []).forEach(v => { if (v) selected.add(v); });
+        for (const v of [...selected]) if (!values.includes(v)) selected.delete(v);
+        updateHeader();
+        renderList();
+        if (!silent) opts.onChange([...selected]);
+      },
+      clear({ silent = false } = {}){
         selected.clear();
         updateHeader();
         renderList();
-        opts.onChange([]);
+        if (!silent) opts.onChange([]);
       },
       getSelected(){
         return [...selected];
@@ -441,24 +449,56 @@
     };
   }
 
-  // Dropdown instances
+  // Dropdown instances: group/service
   const ddGroup = createCheckboxDropdown(els.ddGroup, {
     placeholder: "Tutti i gruppi",
-    onChange: (arr) => {
-      state.selectedGroups = new Set(arr);
-      applyFilters();
-    }
+    onChange: (arr) => { state.selectedGroups = new Set(arr); applyFilters(); }
   });
 
   const ddService = createCheckboxDropdown(els.ddService, {
     placeholder: "Tutti i servizi",
+    onChange: (arr) => { state.selectedServices = new Set(arr); applyFilters(); }
+  });
+
+  // ✅ Dropdown instances: region/province/city (multi + cascade)
+  const ddRegion = createCheckboxDropdown(els.ddRegion, {
+    placeholder: "Tutte le regioni",
     onChange: (arr) => {
-      state.selectedServices = new Set(arr);
+      state.selectedRegions = new Set(arr);
+      cascadeFromRegions(); // aggiorna province e città disponibili
       applyFilters();
     }
   });
 
-  // single selects
+  const ddProvince = createCheckboxDropdown(els.ddProvince, {
+    placeholder: "Tutte le province",
+    onChange: (arr) => {
+      state.selectedProvinces = new Set(arr);
+
+      // auto-seleziona (aggiungi) le regioni delle province selezionate
+      const derivedRegions = new Set();
+      for (const code of state.selectedProvinces) {
+        const reg = provRegion(code);
+        if (reg) derivedRegions.add(reg);
+      }
+      // unisci a regioni già selezionate manualmente
+      const merged = new Set([...state.selectedRegions, ...derivedRegions]);
+
+      // aggiorna regioni UI + stato (senza triggerare doppia cascata)
+      ddRegion.addSelected([...derivedRegions], { silent: true });
+      state.selectedRegions = merged;
+
+      cascadeFromRegions(); // restringe province (coerenti) + città
+      applyFilters();
+    }
+  });
+
+  const ddCity = createCheckboxDropdown(els.ddCity, {
+    placeholder: "Tutte le città",
+    onChange: (arr) => { state.selectedCities = new Set(arr); applyFilters(); }
+  });
+
+  // single select: category
   function buildSingleSelect(select, values, allLabel = "Tutte"){
     const current = select.value;
     const sorted = [...values].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
@@ -468,92 +508,93 @@
     if (sorted.includes(current)) select.value = current;
   }
 
-  function buildProvinceSelect(provinceCodes){
-    const current = els.province.value;
-    const sorted = [...provinceCodes].filter(Boolean).sort((a,b)=>a.localeCompare(b,"it"));
+  // compute available sets based on selected regions/provinces
+  function computeAvailableGeo(){
+    const regionsSel = [...state.selectedRegions];
+    const provincesSel = [...state.selectedProvinces];
 
-    els.province.innerHTML =
-      `<option value="">Tutte</option>` +
-      sorted.map(code => `<option value="${code}">${provLabel(code)}</option>`).join("");
-
-    if (sorted.includes(current)) els.province.value = current;
-  }
-
-  function buildCitySelect(cityNames){
-    const current = els.city.value;
-    const sorted = [...cityNames].filter(Boolean).sort((a,b)=>a.localeCompare(b,"it"));
-
-    els.city.innerHTML =
-      `<option value="">Tutte</option>` +
-      sorted.map(c => `<option value="${c}">${c}</option>`).join("");
-
-    if (sorted.includes(current)) els.city.value = current;
-  }
-
-  function computeAvailableSets(){
-    const regionSel = els.region.value;
-    const provSel = els.province.value;
-
-    const provinces = new Set();
-    const cities = new Set();
+    const provincesAvail = new Set();
+    const citiesAvail = new Set();
+    const regionsAvail = new Set();
 
     for (const item of state.items){
       const p = item.feature.properties || {};
       const code = provCode(p);
       const reg = provRegion(code);
+      const city = p.address_city || "";
 
-      if (regionSel && reg !== regionSel) continue;
-      if (provSel && code !== provSel) continue;
+      if (reg) regionsAvail.add(reg);
 
-      if (code) provinces.add(code);
-      if (p.address_city) cities.add(p.address_city);
+      // apply current selections as constraints
+      if (regionsSel.length > 0 && !regionsSel.includes(reg)) continue;
+      if (provincesSel.length > 0 && !provincesSel.includes(code)) continue;
+
+      if (code) provincesAvail.add(code);
+      if (city) citiesAvail.add(city);
     }
 
-    return { provinces, cities };
+    return { regionsAvail, provincesAvail, citiesAvail };
   }
 
-  function onRegionChange(){
-    // regione selezionata -> reset provincia, aggiorna province + città coerenti
-    els.province.value = "";
-    const { provinces, cities } = computeAvailableSets();
-    buildProvinceSelect(provinces);
-    buildCitySelect(cities);
-    applyFilters();
-  }
+  // rebuild province + city dropdown values based on region/province selections
+  function cascadeFromRegions(){
+    const { provincesAvail, citiesAvail } = computeAvailableGeo();
 
-  function onProvinceChange(){
-    // provincia selezionata -> auto-seleziona regione, aggiorna città coerenti
-    const provSel = els.province.value;
-    if (provSel){
-      const reg = provRegion(provSel);
-      if (reg) els.region.value = reg;
+    // Province dropdown: values = solo province compatibili
+    // Nota: valori nel dropdown provincia sono codici "MI", "RM"... ma visualizziamo "MI — Milano"
+    ddProvince.setValues([...provincesAvail].map(code => code));
+    // Aggiorna label visuale nel dropdown provincia: trasformiamo le voci in label estesa usando provLabel
+    // (Trucco semplice: setValues con stringhe "MI — Milano", ma poi perdiamo il codice)
+    // Quindi: teniamo il VALUE come "MI" ma mostriamo label estesa nel rendering:
+    // -> lo facciamo modificando l'HTML dopo render: gestiamo in setProvinceLabels()
+    setProvinceLabels();
+
+    // Se alcune province selezionate non sono più disponibili, puliscile
+    for (const code of [...state.selectedProvinces]) {
+      if (!provincesAvail.has(code)) state.selectedProvinces.delete(code);
     }
-    const { provinces, cities } = computeAvailableSets();
-    buildProvinceSelect(provinces);
-    buildCitySelect(cities);
-    applyFilters();
+    ddProvince.setSelected([...state.selectedProvinces], { silent: true });
+
+    // Città dropdown: solo città compatibili
+    ddCity.setValues(citiesAvail);
+    for (const c of [...state.selectedCities]) {
+      if (!citiesAvail.has(c)) state.selectedCities.delete(c);
+    }
+    ddCity.setSelected([...state.selectedCities], { silent: true });
   }
+
+  // patch: mostra "MI — Milano" nel dropdown province mantenendo value="MI"
+  function setProvinceLabels(){
+    const list = els.ddProvince.querySelector(".dd-list");
+    if (!list) return;
+    list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      const code = cb.value;
+      const span = cb.closest(".dd-item")?.querySelector("span");
+      if (span) span.textContent = provLabel(code);
+    });
+  }
+  // ogni volta che apri/cerca nel dropdown province, il list viene re-renderizzato → rilabel
+  els.ddProvince.addEventListener("click", () => setTimeout(setProvinceLabels, 0));
 
   function rebuildFilters(features){
     const cats = new Set();
-    const regions = new Set();
-    const provinces = new Set();
-    const cities = new Set();
     const services = new Set();
     const groups = new Set();
+
+    const regionsAll = new Set();
+    const provincesAll = new Set();
+    const citiesAll = new Set();
 
     for (const f of features){
       const p = f.properties || {};
       if (p.establishment_category) cats.add(p.establishment_category);
+      if (p.group_name) groups.add(p.group_name);
 
       const code = provCode(p);
-      if (code) provinces.add(code);
-
       const reg = provRegion(code);
-      if (reg) regions.add(reg);
-
-      if (p.address_city) cities.add(p.address_city);
-      if (p.group_name) groups.add(p.group_name);
+      if (reg) regionsAll.add(reg);
+      if (code) provincesAll.add(code);
+      if (p.address_city) citiesAll.add(p.address_city);
 
       if (p.services){
         p.services.split(",").map(s => s.trim()).filter(Boolean).forEach(s => services.add(s));
@@ -561,21 +602,26 @@
     }
 
     buildSingleSelect(els.category, cats, "Tutte");
-    buildSingleSelect(els.region, regions, "Tutte");
-    buildProvinceSelect(provinces);
-    buildCitySelect(cities);
 
     ddGroup.setValues(groups);
     ddService.setValues(services);
+
+    ddRegion.setValues(regionsAll);
+    ddProvince.setValues(provincesAll);
+    setProvinceLabels();
+    ddCity.setValues(citiesAll);
+
+    // applica cascata in base a eventuali selezioni già presenti
+    cascadeFromRegions();
   }
 
   function applyFilters(){
     const q = norm(els.q.value);
     const cat = els.category.value;
 
-    const region = els.region.value;      // ✅ NEW
-    const province = els.province.value;  // ✅ NEW
-    const city = els.city.value;
+    const regionsSel = [...state.selectedRegions];
+    const provincesSel = [...state.selectedProvinces];
+    const citiesSel = [...state.selectedCities];
 
     const selectedGroups = [...state.selectedGroups];
     const selectedServices = [...state.selectedServices];
@@ -588,14 +634,14 @@
 
       if (cat && p.establishment_category !== cat) continue;
 
-      // ✅ region/province filters
       const code = provCode(p);
-      const itemRegion = provRegion(code);
-      if (region && itemRegion !== region) continue;
-      if (province && code !== province) continue;
+      const reg = provRegion(code);
+      const city = p.address_city || "";
 
-      // city filter
-      if (city && p.address_city !== city) continue;
+      // ✅ region/province/city filters (AND across dimensions)
+      if (regionsSel.length > 0 && !regionsSel.includes(reg)) continue;
+      if (provincesSel.length > 0 && !provincesSel.includes(code)) continue;
+      if (citiesSel.length > 0 && !citiesSel.includes(city)) continue;
 
       // groups OR
       if (selectedGroups.length > 0 && !selectedGroups.includes(p.group_name)) continue;
@@ -640,23 +686,25 @@
   els.q.addEventListener("input", applyFilters);
   els.category.addEventListener("change", applyFilters);
 
-  // ✅ cascade listeners
-  els.region.addEventListener("change", onRegionChange);
-  els.province.addEventListener("change", onProvinceChange);
-  els.city.addEventListener("change", applyFilters);
-
   els.reset.addEventListener("click", (e) => {
     e.preventDefault();
     els.q.value = "";
     els.category.value = "";
-    els.region.value = "";
-    els.province.value = "";
-    els.city.value = "";
 
-    ddGroup.clear();
-    ddService.clear();
+    ddGroup.clear({ silent: true });
+    ddService.clear({ silent: true });
 
-    // ripopola province/città complete dopo reset
+    ddRegion.clear({ silent: true });
+    ddProvince.clear({ silent: true });
+    ddCity.clear({ silent: true });
+
+    state.selectedGroups.clear();
+    state.selectedServices.clear();
+    state.selectedRegions.clear();
+    state.selectedProvinces.clear();
+    state.selectedCities.clear();
+
+    // ripristina tutte le opzioni
     if (state.geojson?.features) rebuildFilters(state.geojson.features);
 
     applyFilters();
