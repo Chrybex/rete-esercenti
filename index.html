@@ -115,24 +115,23 @@
       <label for="q">Cerca (nome, indirizzo, città, servizi)</label>
       <input id="q" placeholder="Es. supermercato, Milano, Buoni Pasto..." />
 
-      <label for="category">Categoria</label>
-      <select id="category">
-        <option value="">Tutte</option>
-      </select>
-      <label for="group">Gruppo</label>
-<select id="group">
-  <option value="">Tutti</option>
+     <label for="category">Categoria</label>
+<select id="category">
+  <option value="">Tutte</option>
 </select>
 
-      <label for="service">Servizio</label>
-      <select id="service">
-        <option value="">Tutti</option>
-      </select>
+<label for="group">Gruppo</label>
+<select id="group" multiple size="6">
+</select>
 
-      <label for="city">Città</label>
-      <select id="city">
-        <option value="">Tutte</option>
-      </select>
+<label for="service">Servizio</label>
+<select id="service" multiple size="6">
+</select>
+
+<label for="city">Città</label>
+<select id="city">
+  <option value="">Tutte</option>
+</select>
 
     </div>
 
@@ -164,8 +163,8 @@
   const els = {
     q: document.getElementById("q"),
     category: document.getElementById("category"),
-    service: document.getElementById("service"),
-    group: document.getElementById("group"),     // ✅ NEW
+    service: document.getElementById("service"), // multi
+    group: document.getElementById("group"),     // multi
     city: document.getElementById("city"),
     reset: document.getElementById("reset"),
     kpiVisible: document.getElementById("kpi-visible"),
@@ -175,6 +174,14 @@
   const state = { geojson: null, items: [] };
 
   const norm = (s) => (s ?? "").toString().trim().toLowerCase();
+
+  function getSelectedValues(select){
+    return Array.from(select.selectedOptions).map(o => o.value).filter(Boolean);
+  }
+
+  function clearMultiSelect(select){
+    Array.from(select.options).forEach(o => { o.selected = false; });
+  }
 
   function popupHtml(p){
     const esc = (x) => (x ?? "").toString()
@@ -194,36 +201,47 @@
     </div>`;
   }
 
-  function buildOptionList(select, values){
-    const current = select.value;
-    select.innerHTML = '<option value="">Tutte</option>' +
-      [...values].sort((a,b)=>a.localeCompare(b, "it"))
-        .map(v => `<option value="${v}">${v}</option>`).join("");
-    if ([...values].includes(current)) select.value = current;
+  // Se select è multi: nessuna opzione "Tutte"
+  // Se select è single: aggiunge la prima opzione "Tutte/Tutti"
+  function buildOptionList(select, values, allLabel = "Tutte"){
+    const isMulti = select.multiple === true;
+    const current = isMulti ? new Set(getSelectedValues(select)) : select.value;
+
+    const sorted = [...values].filter(Boolean).sort((a,b)=>a.localeCompare(b, "it"));
+
+    if (isMulti){
+      select.innerHTML = sorted.map(v => `<option value="${v}">${v}</option>`).join("");
+      // ripristina selezioni precedenti se presenti
+      Array.from(select.options).forEach(o => { if (current.has(o.value)) o.selected = true; });
+    } else {
+      select.innerHTML =
+        `<option value="">${allLabel}</option>` +
+        sorted.map(v => `<option value="${v}">${v}</option>`).join("");
+      if (sorted.includes(current)) select.value = current;
+    }
   }
 
   function rebuildFilters(features){
     const cats = new Set();
     const cities = new Set();
     const services = new Set();
-    const groups = new Set(); // ✅ NEW
+    const groups = new Set();
 
     for (const f of features){
       const p = f.properties || {};
       if (p.establishment_category) cats.add(p.establishment_category);
       if (p.address_city) cities.add(p.address_city);
-      if (p.group_name) groups.add(p.group_name); // ✅ NEW
+      if (p.group_name) groups.add(p.group_name);
 
       if (p.services){
-        // split on comma to allow filter on single service
         p.services.split(",").map(s => s.trim()).filter(Boolean).forEach(s => services.add(s));
       }
     }
 
-    buildOptionList(els.category, cats);
-    buildOptionList(els.city, cities);
-    buildOptionList(els.service, services);
-    buildOptionList(els.group, groups); // ✅ NEW
+    buildOptionList(els.category, cats, "Tutte");
+    buildOptionList(els.city, cities, "Tutte");
+    buildOptionList(els.service, services); // multi
+    buildOptionList(els.group, groups);     // multi
   }
 
   function featureText(p){
@@ -237,19 +255,31 @@
     const q = norm(els.q.value);
     const cat = els.category.value;
     const city = els.city.value;
-    const service = els.service.value;
-    const group = els.group.value; // ✅ NEW
+
+    const selectedServices = getSelectedValues(els.service); // multi
+    const selectedGroups = getSelectedValues(els.group);     // multi
 
     cluster.clearLayers();
-
     let visible = 0;
 
     for (const item of state.items){
       const p = item.feature.properties || {};
+
+      // single filters
       if (cat && p.establishment_category !== cat) continue;
       if (city && p.address_city !== city) continue;
-      if (group && p.group_name !== group) continue; // ✅ NEW
-      if (service && !(p.services || "").split(",").map(s=>s.trim()).includes(service)) continue;
+
+      // multi group (OR)
+      if (selectedGroups.length > 0 && !selectedGroups.includes(p.group_name)) continue;
+
+      // multi services (OR)
+      if (selectedServices.length > 0) {
+        const itemServices = (p.services || "").split(",").map(s => s.trim()).filter(Boolean);
+        const match = selectedServices.some(s => itemServices.includes(s));
+        if (!match) continue;
+      }
+
+      // search
       if (q && !featureText(p).includes(q)) continue;
 
       cluster.addLayer(item.marker);
@@ -273,7 +303,6 @@
       return { feature: f, marker };
     });
 
-    // Fit bounds
     const latlngs = state.items.map(x => x.marker.getLatLng());
     map.fitBounds(L.latLngBounds(latlngs).pad(0.08));
 
@@ -284,16 +313,16 @@
   els.q.addEventListener("input", applyFilters);
   els.category.addEventListener("change", applyFilters);
   els.city.addEventListener("change", applyFilters);
-  els.service.addEventListener("change", applyFilters);
-  els.group.addEventListener("change", applyFilters); // ✅ NEW
+  els.service.addEventListener("change", applyFilters); // multi triggers change
+  els.group.addEventListener("change", applyFilters);   // multi triggers change
 
   els.reset.addEventListener("click", (e) => {
     e.preventDefault();
     els.q.value = "";
     els.category.value = "";
     els.city.value = "";
-    els.service.value = "";
-    els.group.value = ""; // ✅ NEW
+    clearMultiSelect(els.service);
+    clearMultiSelect(els.group);
     applyFilters();
   });
 
